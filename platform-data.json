@@ -1,0 +1,168 @@
+{
+  "dns_map": {
+    "trustgrid.local": {
+      "cid": "QmcuCw1UdR33Ry9BNbYLuJ1u9o775DwWzgVjhVHGCcTaKZ",
+      "owner": "36428d8d8be1e36ca000c0406b6efe17",
+      "created": "2025-06-01T16:00:54.873Z",
+      "updated": "2025-06-01T16:00:54.873Z",
+      "type": "webapp-zip",
+      "fileCount": 1
+    },
+    "test.local": {
+      "cid": "QmNhq7KCaLzqsJrCjp4s2tL8fi77orS9bduT5iE1oYJXCf",
+      "owner": "36428d8d8be1e36ca000c0406b6efe17",
+      "created": "2025-06-01T16:12:51.343Z",
+      "updated": "2025-06-01T16:12:51.343Z",
+      "type": "webapp-zip",
+      "fileCount": 1
+    },
+    "test1.local": {
+      "cid": "QmdA1Xe6hERD1AC56Aj1rtgRaazrGoXqthUVEVMhzN7xYQ",
+      "owner": "36428d8d8be1e36ca000c0406b6efe17",
+      "created": "2025-06-01T16:20:10.523Z",
+      "updated": "2025-06-01T16:20:10.523Z",
+      "type": "webapp-zip",
+      "fileCount": 6
+    },
+    "test2.local": {
+      "cid": "QmbCDPdw3ZHn6iUAm726Gaspdkj28o8bMfHZyxddHCRNCT",
+      "owner": "36428d8d8be1e36ca000c0406b6efe17",
+      "created": "2025-06-01T16:24:49.297Z",
+      "updated": "2025-06-01T16:44:06.788Z",
+      "type": "webapp-zip",
+      "fileCount": 6
+    },
+    "love-.local": {
+      "cid": "QmNjzU7Eu941sJXgR3ZhxjLpSfeQWqFUkps3or1yH7EXdH",
+      "owner": "6122bd9b3a96dee7974f7f853a6a9dcc",
+      "created": "2025-06-01T18:39:33.406Z",
+      "updated": "2025-06-01T18:39:33.406Z",
+      "type": "webapp"
+    }
+  },
+  "user_directories": {
+    "36428d8d8be1e36ca000c0406b6efe17": {
+      "dns": [
+        "trustgrid.local",
+        "test.local",
+        "test1.local",
+        "test2.local"
+      ],
+      "files": {}
+    },
+    "4424b37e8c76552ffbee8e762eb3797d": {
+      "dns": [],
+      "files": {}
+    },
+    "bd8ee2069e49444ffaf077df06edf2b1": {
+      "dns": [],
+      "files": {}
+    },
+    "6122bd9b3a96dee7974f7f853a6a9dcc": {
+      "dns": [
+        "love-.local"
+      ],
+      "files": {}
+    }
+  },
+  "cid_history": {
+    "trustgrid.local": [
+      {
+        "cid": "QmcuCw1UdR33Ry9BNbYLuJ1u9o775DwWzgVjhVHGCcTaKZ",
+        "timestamp": "2025-06-01T16:00:54.873Z",
+        "version": 1,
+        "action": "ZIP upload",
+        "fileCount": 1
+      }
+    ],
+    "test.local": [
+      {
+        "cid": "QmNhq7KCaLzqsJrCjp4s2tL8fi77orS9bduT5iE1oYJXCf",
+        "timestamp": "2025-06-01T16:12:51.343Z",
+        "version": 1,
+        "action": "ZIP upload",
+        "fileCount": 1
+      }
+    ],
+    "test1.local": [
+      {
+        "cid": "QmdA1Xe6hERD1AC56Aj1rtgRaazrGoXqthUVEVMhzN7xYQ",
+        "timestamp": "2025-06-01T16:20:10.523Z",
+        "version": 1,
+        "action": "ZIP upload",
+        "fileCount": 6
+      }
+    ],
+    "test2.local": [
+      {
+        "cid": "QmV8HE1EGj9QWK5oPoF9g6UsTXNEw61gnnoQKC8BmbrAh6",
+        "timestamp": "2025-06-01T16:24:49.297Z",
+        "version": 1,
+        "action": "ZIP upload",
+        "fileCount": 6
+      },
+      {
+        "cid": "QmbCDPdw3ZHn6iUAm726Gaspdkj28o8bMfHZyxddHCRNCT",
+        "timestamp": "2025-06-01T16:44:06.788Z",
+        "version": 2,
+        "action": "Updated file: data/data.json"
+      }
+    ],
+    "love-.local": [
+      {
+        "cid": "QmNjzU7Eu941sJXgR3ZhxjLpSfeQWqFUkps3or1yH7EXdH",
+        "timestamp": "2025-06-01T18:39:33.406Z",
+        "version": 1
+      }
+    ]
+  },
+  "file_ownership": {
+    "data.json": "36428d8d8be1e36ca000c0406b6efe17",
+    "data/data.json": "6122bd9b3a96dee7974f7f853a6a9dcc",
+    "index.html": "6122bd9b3a96dee7974f7f853a6a9dcc",
+    "int.html": "36428d8d8be1e36ca000c0406b6efe17",
+    "script.js": "36428d8d8be1e36ca000c0406b6efe17",
+    "string.html": "36428d8d8be1e36ca000c0406b6efe17",
+    "style.css": "36428d8d8be1e36ca000c0406b6efe17",
+    "styles/style.css": "6122bd9b3a96dee7974f7f853a6a9dcc"
+  },
+  "access_tokens": {
+    "7739c6ea8b7f4f8d421e1acd1eeaa2a4f7bdb948fc80b4e0e62b47526894b331": {
+      "userId": "36428d8d8be1e36ca000c0406b6efe17",
+      "permissions": [
+        "read",
+        "write",
+        "upload"
+      ],
+      "expires": 1751385037422
+    },
+    "9d238fe36e07aecf6d041940f0d16081f1815f7cfa3f0ac60c85f7faf45c3ea7": {
+      "userId": "4424b37e8c76552ffbee8e762eb3797d",
+      "permissions": [
+        "read",
+        "write",
+        "upload"
+      ],
+      "expires": 1751387119746
+    },
+    "8d77fad4f75af676b4f4e2c5386c026fe3f453030705f1a834aedd4e6a760301": {
+      "userId": "bd8ee2069e49444ffaf077df06edf2b1",
+      "permissions": [
+        "read",
+        "write",
+        "upload"
+      ],
+      "expires": 1751387987911
+    },
+    "8ec250ffe9520c813f1b00a17c65bb262ffce51e54de6a3266ff9edfad4aae7e": {
+      "userId": "6122bd9b3a96dee7974f7f853a6a9dcc",
+      "permissions": [
+        "read",
+        "write",
+        "upload"
+      ],
+      "expires": 1751395088661
+    }
+  },
+  "timestamp": "2025-06-01T18:39:33.408Z"
+}
