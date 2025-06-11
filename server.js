@@ -13,6 +13,10 @@ import crypto from 'crypto';
 import multer from 'multer';
 import AdmZip from 'adm-zip';
 
+let user_folders = {};
+let folder_contents = {}; 
+let user_aliases = {};
+
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
@@ -26,6 +30,20 @@ const upload = multer({
   limits: { fileSize: 100 * 1024 * 1024 } // 100MB limit
 });
 
+// function saveData() {
+//   const data = {
+//     dns_map,
+//     user_directories,
+//     cid_history,
+//     file_ownership,
+//     access_tokens,
+//     user_folders,        // ADD THIS
+//     folder_contents,     // ADD THIS
+//     timestamp: new Date().toISOString()
+//   };
+//   fs.writeFileSync(DATA_FILE, JSON.stringify(data, null, 2));
+// }
+
 let ipfsDaemon = null;
 
 // Enhanced mapping systems
@@ -35,10 +53,314 @@ let cid_history = {};       // dns => [{ cid, timestamp, version }]
 let file_ownership = {};    // filename => userId
 let access_tokens = {};     // token => { userId, permissions, expires }
 
+
+// async function createUserFolder(username) {
+//   const folderDir = path.join(__dirname, 'temp', `user-${username}-${Date.now()}`);
+//   fs.mkdirSync(folderDir, { recursive: true });
+  
+//   // Create initial folder structure
+//   const welcomeFile = path.join(folderDir, 'welcome.txt');
+//   fs.writeFileSync(welcomeFile, `Welcome to ${username}'s IPFS folder!\nCreated: ${new Date().toISOString()}\nQuota: 10MB`);
+  
+//   // Upload to IPFS
+//   const result = await execPromise(`ipfs add -r .`, folderDir);
+//   const lines = result.trim().split('\n');
+//   const cid = lines[lines.length - 1].split(' ')[1];
+  
+//   // Initialize user folder data
+//   user_folders[username] = {
+//     cid,
+//     quota_used: 1024, // welcome.txt size
+//     quota_limit: 10 * 1024 * 1024, // 10MB
+//     created: new Date().toISOString(),
+//     updated: new Date().toISOString()
+//   };
+  
+//   folder_contents[username] = {
+//     files: { 'welcome.txt': { size: 1024, cid: cid, type: 'text' } },
+//     websites: {}
+//   };
+  
+//   // Cleanup
+//   fs.rmSync(folderDir, { recursive: true, force: true });
+  
+//   return cid;
+// }
+
+
+async function createUserFolder(alias) {
+  const folderDir = path.join(__dirname, 'temp', `user-${alias}-${Date.now()}`);
+  fs.mkdirSync(folderDir, { recursive: true });
+  
+  // Create initial folder structure with more content
+  const welcomeFile = path.join(folderDir, 'welcome.txt');
+  const readmeFile = path.join(folderDir, 'README.md');
+  
+  // Create subdirectories
+  fs.mkdirSync(path.join(folderDir, 'websites'), { recursive: true });
+  fs.mkdirSync(path.join(folderDir, 'files'), { recursive: true });
+  fs.mkdirSync(path.join(folderDir, 'media'), { recursive: true });
+  
+  // Welcome content
+  fs.writeFileSync(welcomeFile, `Welcome to ${alias}'s IPFS folder!
+Created: ${new Date().toISOString()}
+Quota: 10MB
+Alias: ${alias}
+
+This is your personal IPFS storage space. You can:
+- Host websites in the 'websites' folder
+- Store files in the 'files' folder  
+- Upload media in the 'media' folder
+
+Happy building! 🚀`);
+
+  // README with folder structure
+  fs.writeFileSync(readmeFile, `# ${alias}'s IPFS Folder
+
+## Structure
+- \`websites/\` - Your deployed websites
+- \`files/\` - Document storage
+- \`media/\` - Images, videos, assets
+- \`welcome.txt\` - Welcome message
+
+## Usage
+This folder is managed by the IPFS Portfolio Builder platform.
+Each update creates a new CID while maintaining version history.
+
+## Quota: 10MB
+Use your space wisely!
+
+---
+Generated: ${new Date().toISOString()}
+`);
+
+  // Add a placeholder index.html for the folder
+  const indexFile = path.join(folderDir, 'index.html');
+  fs.writeFileSync(indexFile, `<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>${alias}'s IPFS Folder</title>
+    <style>
+        body { font-family: Arial, sans-serif; max-width: 800px; margin: 50px auto; padding: 20px; background: #f5f5f5; }
+        .container { background: white; padding: 40px; border-radius: 10px; box-shadow: 0 10px 30px rgba(0,0,0,0.1); }
+        .header { text-align: center; border-bottom: 2px solid #2196F3; padding-bottom: 20px; margin-bottom: 30px; }
+        .folder-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 20px; }
+        .folder-item { background: #f8f9fa; padding: 20px; border-radius: 8px; text-align: center; }
+        .folder-icon { font-size: 3rem; margin-bottom: 10px; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>📁 ${alias}'s IPFS Folder</h1>
+            <p>Personal storage space on the decentralized web</p>
+        </div>
+        
+        <div class="folder-grid">
+            <div class="folder-item">
+                <div class="folder-icon">🌐</div>
+                <h3>Websites</h3>
+                <p>Your deployed web applications</p>
+            </div>
+            <div class="folder-item">
+                <div class="folder-icon">📄</div>
+                <h3>Files</h3>
+                <p>Documents and data storage</p>
+            </div>
+            <div class="folder-item">
+                <div class="folder-icon">🎨</div>
+                <h3>Media</h3>
+                <p>Images, videos, and assets</p>
+            </div>
+        </div>
+        
+        <div style="text-align: center; margin-top: 40px; color: #666;">
+            <p>Created: ${new Date().toLocaleDateString()}</p>
+            <p>Quota: 10MB available</p>
+        </div>
+    </div>
+</body>
+</html>`);
+
+  // Upload to IPFS
+  const result = await execPromise(`ipfs add -r .`, folderDir);
+  const lines = result.trim().split('\n');
+  const cid = lines[lines.length - 1].split(' ')[1];
+  
+  // Calculate initial size
+  const initialSize = fs.readFileSync(welcomeFile).length + 
+                     fs.readFileSync(readmeFile).length + 
+                     fs.readFileSync(indexFile).length;
+  
+  // Initialize user folder data
+  user_folders[alias] = {
+    cid,
+    quota_used: initialSize,
+    quota_limit: 10 * 1024 * 1024, // 10MB
+    created: new Date().toISOString(),
+    updated: new Date().toISOString(),
+    files_count: 3,
+    websites_count: 0
+  };
+  
+  folder_contents[alias] = {
+    files: { 
+      'welcome.txt': { size: fs.readFileSync(welcomeFile).length, type: 'text' },
+      'README.md': { size: fs.readFileSync(readmeFile).length, type: 'markdown' },
+      'index.html': { size: fs.readFileSync(indexFile).length, type: 'html' }
+    },
+    websites: {}
+  };
+  
+  // Cleanup
+  fs.rmSync(folderDir, { recursive: true, force: true });
+  
+  return cid;
+}
+
+async function calculateFolderSize(username) {
+  let totalSize = 0;
+  const contents = folder_contents[username];
+  
+  if (contents) {
+    // Calculate file sizes
+    Object.values(contents.files).forEach(file => {
+      totalSize += file.size || 0;
+    });
+    
+    // Calculate website sizes (estimated)
+    Object.values(contents.websites).forEach(site => {
+      totalSize += site.estimated_size || 0;
+    });
+  }
+  
+  return totalSize;
+}
+
+function checkQuota(username, additionalSize) {
+  const folder = user_folders[username];
+  if (!folder) return false;
+  
+  const currentUsed = folder.quota_used || 0;
+  const limit = folder.quota_limit || (10 * 1024 * 1024);
+  
+  return (currentUsed + additionalSize) <= limit;
+}
+
+async function updateUserFolder(username, newContent, contentType, contentSize) {
+  if (!user_folders[username]) {
+    throw new Error('User folder not found');
+  }
+  
+  // Check quota
+  if (!checkQuota(username, contentSize)) {
+    const available = (user_folders[username].quota_limit - user_folders[username].quota_used) / 1024 / 1024;
+    throw new Error(`Quota exceeded. Available: ${available.toFixed(2)}MB`);
+  }
+  
+  // Get current folder content
+  const currentCID = user_folders[username].cid;
+  const tempDir = path.join(__dirname, 'temp', `update-user-${username}-${Date.now()}`);
+  
+  try {
+    // Download current folder
+    await execPromise(`ipfs get ${currentCID} -o ${tempDir}`);
+    const folderDir = path.join(tempDir, currentCID);
+    
+    // Add new content based on type
+    if (contentType === 'website') {
+      const websiteDir = path.join(folderDir, 'websites', newContent.dns);
+      fs.mkdirSync(websiteDir, { recursive: true });
+      
+      // Copy website files
+      for (const [filename, content] of Object.entries(newContent.files)) {
+        const filePath = path.join(websiteDir, filename);
+        const fileDir = path.dirname(filePath);
+        fs.mkdirSync(fileDir, { recursive: true });
+        
+        if (typeof content === 'string') {
+          fs.writeFileSync(filePath, content);
+        } else {
+          fs.writeFileSync(filePath, Buffer.from(content, 'base64'));
+        }
+      }
+      
+      // Update folder contents tracking
+      if (!folder_contents[username]) folder_contents[username] = { files: {}, websites: {} };
+      folder_contents[username].websites[newContent.dns] = {
+        estimated_size: contentSize,
+        files: Object.keys(newContent.files),
+        created: new Date().toISOString()
+      };
+      
+    } else if (contentType === 'file') {
+      const filePath = path.join(folderDir, 'files', newContent.filename);
+      const fileDir = path.dirname(filePath);
+      fs.mkdirSync(fileDir, { recursive: true });
+      
+      if (newContent.encoding === 'base64') {
+        fs.writeFileSync(filePath, Buffer.from(newContent.content, 'base64'));
+      } else {
+        fs.writeFileSync(filePath, newContent.content);
+      }
+      
+      // Update folder contents tracking
+      if (!folder_contents[username]) folder_contents[username] = { files: {}, websites: {} };
+      folder_contents[username].files[newContent.filename] = {
+        size: contentSize,
+        type: newContent.type || 'unknown',
+        created: new Date().toISOString()
+      };
+    }
+    
+    // Re-upload to IPFS
+    const result = await execPromise(`ipfs add -r .`, folderDir);
+    const lines = result.trim().split('\n');
+    const newCID = lines[lines.length - 1].split(' ')[1];
+    
+    // Update user folder data
+    const oldCID = user_folders[username].cid;
+    user_folders[username].cid = newCID;
+    user_folders[username].quota_used += contentSize;
+    user_folders[username].updated = new Date().toISOString();
+    
+    // Update counts
+    if (contentType === 'website') {
+      user_folders[username].websites_count = Object.keys(folder_contents[username].websites).length;
+    }
+    user_folders[username].files_count = Object.keys(folder_contents[username].files).length;
+    
+    // Cleanup
+    fs.rmSync(tempDir, { recursive: true, force: true });
+    
+    return { oldCID, newCID, quotaUsed: user_folders[username].quota_used };
+    
+  } catch (err) {
+    if (fs.existsSync(tempDir)) {
+      fs.rmSync(tempDir, { recursive: true, force: true });
+    }
+    throw err;
+  }
+}
+
 // Persistent storage
 const DATA_FILE = path.join(__dirname, 'platform-data.json');
 
 // ========== Data Persistence ==========
+// function saveData() {
+//   const data = {
+//     dns_map,
+//     user_directories,
+//     cid_history,
+//     file_ownership,
+//     access_tokens,
+//     timestamp: new Date().toISOString()
+//   };
+//   fs.writeFileSync(DATA_FILE, JSON.stringify(data, null, 2));
+// }
+
 function saveData() {
   const data = {
     dns_map,
@@ -46,9 +368,26 @@ function saveData() {
     cid_history,
     file_ownership,
     access_tokens,
+    user_folders,
+    folder_contents,
+    user_aliases,  // ADD THIS
     timestamp: new Date().toISOString()
   };
   fs.writeFileSync(DATA_FILE, JSON.stringify(data, null, 2));
+}
+
+
+function getUserByAlias(alias) {
+  const userId = user_aliases[alias];
+  if (!userId) return null;
+  
+  return {
+    userId,
+    alias,
+    folder: user_folders[alias],
+    contents: folder_contents[alias],
+    directory: user_directories[userId]
+  };
 }
 
 function loadData() {
@@ -60,12 +399,31 @@ function loadData() {
       cid_history = data.cid_history || {};
       file_ownership = data.file_ownership || {};
       access_tokens = data.access_tokens || {};
+      user_folders = data.user_folders || {};
+      folder_contents = data.folder_contents || {};
+      user_aliases = data.user_aliases || {};  // ADD THIS
       console.log('📊 Data loaded from storage');
     }
   } catch (err) {
     console.error('❌ Failed to load data:', err.message);
   }
 }
+
+function validateUser(token) {
+  const auth = access_tokens[token];
+  if (!auth || auth.expires < Date.now()) {
+    return null;
+  }
+  return {
+    userId: auth.userId,
+    alias: auth.alias,
+    permissions: auth.permissions
+  };
+}
+
+
+
+
 
 // ========== Helper Functions ==========
 function generateUserId() {
@@ -159,42 +517,111 @@ function stopIPFS() {
   });
 }
 
-function validateUser(token) {
-  const auth = access_tokens[token];
-  if (!auth || auth.expires < Date.now()) {
-    return null;
-  }
-  return auth.userId;
-}
-
 // ========== Authentication Middleware ==========
 function requireAuth(req, res, next) {
   const token = req.headers.authorization?.replace('Bearer ', '');
-  const userId = validateUser(token);
+  const userInfo = validateUser(token);  // Changed from 'auth' to 'userInfo'
   
-  if (!userId) {
+  if (!userInfo) {
     return res.status(401).json({ error: 'Invalid or expired token' });
   }
   
-  req.userId = userId;
+  req.userId = userInfo.userId;
+  req.userAlias = userInfo.alias;
+  req.userPermissions = userInfo.permissions;
   next();
 }
 
 // ========== Core Command Handlers ==========
-app.post('/auth/register', (req, res) => {
-  const userId = generateUserId();
-  const token = generateToken();
+// app.post('/auth/register', (req, res) => {
+//   const userId = generateUserId();
+//   const token = generateToken();
   
-  access_tokens[token] = {
-    userId,
-    permissions: ['read', 'write', 'upload'],
-    expires: Date.now() + (30 * 24 * 60 * 60 * 1000) // 30 days
-  };
+//   access_tokens[token] = {
+//     userId,
+//     permissions: ['read', 'write', 'upload'],
+//     expires: Date.now() + (30 * 24 * 60 * 60 * 1000) // 30 days
+//   };
   
-  user_directories[userId] = { dns: [], files: {} };
-  saveData();
+//   user_directories[userId] = { dns: [], files: {} };
+//   saveData();
   
-  res.json({ userId, token, message: 'User registered successfully' });
+//   res.json({ userId, token, message: 'User registered successfully' });
+// });
+
+app.post('/auth/register', async (req, res) => {
+  const { alias } = req.body;
+  
+  // Validate alias
+  if (!alias || alias.length < 3) {
+    return res.status(400).json({ error: 'Alias must be at least 3 characters long' });
+  }
+  
+  // Check alias format (alphanumeric, hyphens, underscores only)
+  const aliasRegex = /^[a-zA-Z0-9_-]+$/;
+  if (!aliasRegex.test(alias)) {
+    return res.status(400).json({ 
+      error: 'Alias can only contain letters, numbers, hyphens, and underscores' 
+    });
+  }
+  
+  // Check if alias already exists
+  if (user_folders[alias]) {
+    return res.status(409).json({ 
+      error: 'Alias already taken. Please choose a different one.' 
+    });
+  }
+  
+  try {
+    // Generate user credentials
+    const userId = generateUserId();
+    const token = generateToken();
+    
+    // Create user folder on IPFS
+    const folderCID = await createUserFolder(alias);
+    
+    // Store authentication data
+    access_tokens[token] = {
+      userId,
+      alias,  // Add alias to token data
+      permissions: ['read', 'write', 'upload'],
+      expires: Date.now() + (30 * 24 * 60 * 60 * 1000) // 30 days
+    };
+    
+    // Initialize user directory
+    user_directories[userId] = { 
+      alias,
+      dns: [], 
+      files: {} 
+    };
+    
+    // Initialize user folder mapping (alias -> userId)
+    user_aliases[alias] = userId;
+    
+    saveData();
+    
+    res.json({
+      success: true,
+      userId,
+      alias,
+      token,
+      userFolder: {
+        cid: user_folders[alias].cid,
+        quota_used: user_folders[alias].quota_used,
+        quota_limit: user_folders[alias].quota_limit,
+        quota_available: user_folders[alias].quota_limit - user_folders[alias].quota_used,
+        gateway_url: `http://localhost:8080/ipfs/${user_folders[alias].cid}`,
+        platform_url: `http://localhost:3000/user-folder/${alias}`
+      },
+      message: `Welcome ${alias}! Your IPFS folder has been created.`
+    });
+    
+  } catch (err) {
+    console.error('Registration error:', err);
+    return res.status(500).json({ 
+      error: 'Failed to create user account: ' + err.message 
+    });
+  }
 });
 
 app.post('/command', requireAuth, async (req, res) => {
@@ -382,14 +809,50 @@ app.post('/command', requireAuth, async (req, res) => {
       }
 
       case 'list-user-sites': {
-        const userSites = user_directories[userId]?.dns || [];
-        const sites = userSites.map(dns => ({
+        // Get user's sites from both old system and new folder system
+        const userSites = user_directories[req.userId]?.dns || [];
+        const folderSites = [];
+        
+        console.log('Loading sites for user:', req.userId, 'alias:', req.userAlias);
+        console.log('User sites from directories:', userSites);
+        
+        // If user has an alias, get sites from their folder
+        if (req.userAlias && folder_contents[req.userAlias]) {
+          const websites = folder_contents[req.userAlias].websites || {};
+          console.log('Folder websites:', websites);
+          
+          Object.entries(websites).forEach(([dns, siteInfo]) => {
+            if (dns_map[dns]) {
+              folderSites.push({
+                dns,
+                ...dns_map[dns],
+                versions: cid_history[dns]?.length || 1,
+                in_user_folder: true,
+                folder_path: `websites/${dns}`
+              });
+            }
+          });
+        }
+        
+        // Get traditional sites
+        const traditionalSites = userSites.map(dns => ({
           dns,
           ...dns_map[dns],
-          versions: cid_history[dns]?.length || 0
-        }));
+          versions: cid_history[dns]?.length || 1,
+          in_user_folder: false
+        })).filter(site => site.cid); // Filter out sites without CID
         
-        return res.json({ sites, total: sites.length });
+        // Combine both types
+        const allSites = [...folderSites, ...traditionalSites];
+        
+        console.log('Total sites found:', allSites.length);
+        
+        return res.json({ 
+          sites: allSites, 
+          total: allSites.length,
+          user_alias: req.userAlias,
+          folder_cid: user_folders[req.userAlias]?.cid
+        });
       }
 
       case 'get-site-history': {
@@ -431,6 +894,165 @@ app.post('/command', requireAuth, async (req, res) => {
 
         saveData();
         return res.json({ dns, rolledBackTo: version, newCID: targetVersion.cid });
+      }
+
+      case 'create-user-folder': {
+        const { username } = args;
+        
+        if (!username || username.length < 3) {
+          return res.status(400).json({ error: 'Username must be at least 3 characters' });
+        }
+        
+        if (user_folders[username]) {
+          return res.status(400).json({ error: 'User folder already exists' });
+        }
+        
+        try {
+          const cid = await createUserFolder(username);
+          saveData();
+          
+          return res.json({
+            username,
+            cid,
+            quota_limit: '10MB',
+            quota_used: '1KB',
+            gateway_url: `http://localhost:8080/ipfs/${cid}`,
+            message: 'User folder created successfully'
+          });
+        } catch (err) {
+          return res.status(500).json({ error: 'Failed to create user folder: ' + err.message });
+        }
+      }
+
+      case 'get-user-folder': {
+        const { username } = args;
+        
+        if (!user_folders[username]) {
+          return res.status(404).json({ error: 'User folder not found' });
+        }
+        
+        const folder = user_folders[username];
+        const contents = folder_contents[username];
+        
+        return res.json({
+          username,
+          cid: folder.cid,
+          quota_used: folder.quota_used,
+          quota_limit: folder.quota_limit,
+          quota_available: folder.quota_limit - folder.quota_used,
+          quota_percentage: ((folder.quota_used / folder.quota_limit) * 100).toFixed(2),
+          created: folder.created,
+          updated: folder.updated,
+          contents: contents,
+          gateway_url: `http://localhost:8080/ipfs/${folder.cid}`
+        });
+      }
+
+      case 'get-user-folder-info': {
+        if (!req.userAlias || !user_folders[req.userAlias]) {
+          return res.status(404).json({ error: 'User folder not found' });
+        }
+        
+        const folder = user_folders[req.userAlias];
+        const contents = folder_contents[req.userAlias] || { files: {}, websites: {} };
+        
+        return res.json({
+          alias: req.userAlias,
+          folder: {
+            cid: folder.cid,
+            quota_used: folder.quota_used,
+            quota_limit: folder.quota_limit,
+            quota_available: folder.quota_limit - folder.quota_used,
+            quota_percentage: ((folder.quota_used / folder.quota_limit) * 100).toFixed(2),
+            created: folder.created,
+            updated: folder.updated
+          },
+          contents: {
+            files: contents.files,
+            websites: contents.websites,
+            files_count: Object.keys(contents.files).length,
+            websites_count: Object.keys(contents.websites).length
+          },
+          gateway_url: `http://localhost:8080/ipfs/${folder.cid}`,
+          platform_url: `http://localhost:3000/user-folder/${req.userAlias}`
+        });
+      }
+
+      case 'upload-to-user-folder': {
+        const { username, type, content } = args;
+        
+        // Verify user owns this folder or is admin
+        if (username !== req.userAlias) {
+          return res.status(403).json({ error: 'Access denied to this folder' });
+        }
+        
+        if (!user_folders[username]) {
+          return res.status(404).json({ error: 'User folder not found. Please contact support.' });
+        }
+        
+        // Estimate content size
+        let contentSize = 0;
+        if (type === 'website') {
+          Object.values(content.files).forEach(fileContent => {
+            contentSize += typeof fileContent === 'string' ? 
+              Buffer.byteLength(fileContent, 'utf8') : 
+              Buffer.byteLength(fileContent, 'base64');
+          });
+        } else if (type === 'file') {
+          contentSize = typeof content.content === 'string' ? 
+            Buffer.byteLength(content.content, 'utf8') : 
+            Buffer.byteLength(content.content, 'base64');
+        }
+        
+        try {
+          const result = await updateUserFolder(username, content, type, contentSize);
+          
+          // If it's a website, also update DNS mapping to point to user folder
+          if (type === 'website' && content.dns) {
+            const websitePath = `websites/${content.dns}`;
+            dns_map[content.dns] = {
+              cid: result.newCID,
+              owner: req.userId,
+              created: new Date().toISOString(),
+              updated: new Date().toISOString(),
+              type: 'user-folder-website',
+              user_folder: username,
+              folder_path: websitePath
+            };
+            
+            // Add to cid history
+            if (!cid_history[content.dns]) cid_history[content.dns] = [];
+            cid_history[content.dns].push({
+              cid: result.newCID,
+              timestamp: new Date().toISOString(),
+              version: cid_history[content.dns].length + 1,
+              action: 'Created in user folder'
+            });
+            
+            // Add to user directory
+            if (!user_directories[req.userId].dns.includes(content.dns)) {
+              user_directories[req.userId].dns.push(content.dns);
+            }
+          }
+          
+          saveData();
+          
+          return res.json({
+            username,
+            type,
+            oldCID: result.oldCID,
+            newCID: result.newCID,
+            quota_used: result.quotaUsed,
+            quota_available: user_folders[username].quota_limit - result.quotaUsed,
+            website_url: type === 'website' ? 
+              `http://localhost:8080/ipfs/${result.newCID}/websites/${content.dns}` : null,
+            folder_url: `http://localhost:8080/ipfs/${result.newCID}`,
+            message: `${type} uploaded to user folder successfully`
+          });
+          
+        } catch (err) {
+          return res.status(400).json({ error: err.message });
+        }
       }
 
       default:
@@ -791,17 +1413,6 @@ app.post('/resolve-ipfs', async (req, res) => {
 
 // ========== Platform Stats ==========
 
-app.get('/stats', (req, res) => {
-  res.json({
-    totalSites: Object.keys(dns_map).length,
-    totalUsers: Object.keys(user_directories).length,
-    totalFiles: Object.keys(file_ownership).length,
-    activeTokens: Object.keys(access_tokens).filter(token => 
-      access_tokens[token].expires > Date.now()
-    ).length
-  });
-});
-
 app.get('/site/:dns', async (req, res) => {
   const dns = req.params.dns;
   const site = dns_map[dns];
@@ -923,8 +1534,194 @@ app.get('/resolve-dns/:dns', async (req, res) => {
   }
 });
 
+app.get('/user-folders', (req, res) => {
+  const folders = Object.keys(user_folders).map(username => ({
+    username,
+    cid: user_folders[username].cid,
+    quota_used: user_folders[username].quota_used,
+    quota_limit: user_folders[username].quota_limit,
+    created: user_folders[username].created,
+    file_count: Object.keys(folder_contents[username]?.files || {}).length,
+    website_count: Object.keys(folder_contents[username]?.websites || {}).length,
+    gateway_url: `http://localhost:8080/ipfs/${user_folders[username].cid}`
+  }));
+  
+  res.json({ folders, total: folders.length });
+});
+
+// Add route to browse user folder
+app.get('/user-folder/:username', (req, res) => {
+  const username = req.params.username;
+  
+  if (!user_folders[username]) {
+    return res.status(404).json({ error: 'User folder not found' });
+  }
+  
+  const folder = user_folders[username];
+  const contents = folder_contents[username];
+  
+  // If browser request, return HTML
+  if (req.headers.accept && req.headers.accept.includes('text/html')) {
+    return res.send(`
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <title>User Folder: ${username}</title>
+        <style>
+          body { font-family: Arial, sans-serif; padding: 40px; background: #f5f5f5; }
+          .container { max-width: 900px; margin: 0 auto; background: white; padding: 40px; border-radius: 10px; box-shadow: 0 10px 30px rgba(0,0,0,0.1); }
+          .header { text-align: center; border-bottom: 2px solid #3498db; padding-bottom: 20px; margin-bottom: 30px; }
+          .quota-bar { background: #ecf0f1; height: 20px; border-radius: 10px; overflow: hidden; margin: 20px 0; }
+          .quota-fill { background: #3498db; height: 100%; transition: width 0.3s; }
+          .quota-full { background: #e74c3c; }
+          .section { margin: 30px 0; }
+          .item { background: #f8f9fa; padding: 15px; margin: 10px 0; border-radius: 8px; }
+          .btn { background: #3498db; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px; margin: 5px; display: inline-block; }
+        </style>
+      </head>
+      <body>
+        <div class="container">
+          <div class="header">
+            <h1>📁 ${username}'s Folder</h1>
+            <p><strong>CID:</strong> <code>${folder.cid}</code></p>
+            <div class="quota-bar">
+              <div class="quota-fill ${folder.quota_used / folder.quota_limit > 0.9 ? 'quota-full' : ''}" 
+                   style="width: ${(folder.quota_used / folder.quota_limit * 100)}%"></div>
+            </div>
+            <p><strong>Storage:</strong> ${(folder.quota_used / 1024 / 1024).toFixed(2)}MB / ${(folder.quota_limit / 1024 / 1024).toFixed(0)}MB 
+               (${((folder.quota_used / folder.quota_limit) * 100).toFixed(1)}% used)</p>
+          </div>
+          
+          <div class="section">
+            <h3>📄 Files (${Object.keys(contents.files).length})</h3>
+            ${Object.entries(contents.files).map(([filename, info]) => `
+              <div class="item">
+                <strong>${filename}</strong> - ${(info.size / 1024).toFixed(2)}KB
+                <span style="color: #666; margin-left: 10px;">${info.type}</span>
+              </div>
+            `).join('')}
+          </div>
+          
+          <div class="section">
+            <h3>🌐 Websites (${Object.keys(contents.websites).length})</h3>
+            ${Object.entries(contents.websites).map(([dns, info]) => `
+              <div class="item">
+                <strong>${dns}</strong> - ${(info.estimated_size / 1024).toFixed(2)}KB
+                <br><small>Files: ${info.files.join(', ')}</small>
+              </div>
+            `).join('')}
+          </div>
+          
+          <div style="text-align: center; margin-top: 30px;">
+            <a href="http://localhost:8080/ipfs/${folder.cid}" class="btn">🔗 Browse Folder</a>
+            <a href="http://localhost:3000/" class="btn">🏠 Platform Home</a>
+          </div>
+        </div>
+      </body>
+      </html>
+    `);
+  }
+  
+  // JSON response
+  res.json({
+    username,
+    folder,
+    contents,
+    gateway_url: `http://localhost:8080/ipfs/${folder.cid}`
+  });
+});
+
+app.get('/auth/check-alias/:alias', (req, res) => {
+  const alias = req.params.alias;
+  
+  // Validate format
+  const aliasRegex = /^[a-zA-Z0-9_-]+$/;
+  if (!aliasRegex.test(alias) || alias.length < 3) {
+    return res.json({ 
+      available: false, 
+      reason: 'Invalid format. Use 3+ characters, letters, numbers, hyphens, and underscores only.' 
+    });
+  }
+  
+  // Check availability
+  const available = !user_folders[alias];
+  
+  res.json({ 
+    alias,
+    available,
+    reason: available ? 'Alias is available!' : 'Alias already taken.'
+  });
+});
+
+app.get('/user/:alias', (req, res) => {
+  const alias = req.params.alias;
+  const user = getUserByAlias(alias);
+  
+  if (!user) {
+    return res.status(404).json({ error: 'User not found' });
+  }
+  
+  // Return public profile info
+  res.json({
+    alias,
+    folder: {
+      cid: user.folder.cid,
+      created: user.folder.created,
+      websites_count: user.folder.websites_count || 0,
+      gateway_url: `http://localhost:8080/ipfs/${user.folder.cid}`,
+      platform_url: `http://localhost:3000/user-folder/${alias}`
+    },
+    websites: user.directory.dns.map(dns => ({
+      dns,
+      cid: dns_map[dns]?.cid,
+      type: dns_map[dns]?.type,
+      created: dns_map[dns]?.created
+    }))
+  });
+});
+
+app.get('/users', (req, res) => {
+  const users = Object.entries(user_aliases).map(([alias, userId]) => ({
+    alias,
+    folder_cid: user_folders[alias]?.cid,
+    websites_count: user_directories[userId]?.dns.length || 0,
+    created: user_folders[alias]?.created,
+    profile_url: `http://localhost:3000/user/${alias}`
+  }));
+  
+  res.json({ users, total: users.length });
+});
+
+app.get('/stats', (req, res) => {
+  const totalUsers = Object.keys(user_aliases).length;
+  const totalStorage = Object.values(user_folders).reduce((sum, folder) => sum + folder.quota_used, 0);
+  
+  res.json({
+    totalSites: Object.keys(dns_map).length,
+    totalUsers,
+    totalAliases: totalUsers,
+    totalFiles: Object.keys(file_ownership).length,
+    totalStorage: `${(totalStorage / 1024 / 1024).toFixed(2)}MB`,
+    activeTokens: Object.keys(access_tokens).filter(token => 
+      access_tokens[token].expires > Date.now()
+    ).length,
+    averageStoragePerUser: totalUsers > 0 ? `${(totalStorage / totalUsers / 1024).toFixed(2)}KB` : '0KB'
+  });
+});
+
+
 // ========== Server Startup ==========
 loadData();
+
+function debugAuth(req, res, next) {
+  console.log('=== AUTH DEBUG ===');
+  console.log('Headers:', req.headers.authorization);
+  console.log('Token exists:', !!req.headers.authorization);
+  console.log('Access tokens keys:', Object.keys(access_tokens));
+  console.log('User aliases:', user_aliases);
+  console.log('==================');
+  next();
+}
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, async () => {
