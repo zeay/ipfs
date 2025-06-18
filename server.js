@@ -274,6 +274,10 @@ async function updateUserFolder(username, newContent, contentType, contentSize) 
       const websiteDir = path.join(folderDir, 'websites', newContent.dns);
       fs.mkdirSync(websiteDir, { recursive: true });
       
+      // Ensure data directory exists in website
+      const dataDir = path.join(websiteDir, 'data');
+      fs.mkdirSync(dataDir, { recursive: true });
+      
       // Copy website files
       for (const [filename, content] of Object.entries(newContent.files)) {
         const filePath = path.join(websiteDir, filename);
@@ -287,12 +291,29 @@ async function updateUserFolder(username, newContent, contentType, contentSize) 
         }
       }
       
+      // IMPORTANT: Ensure data.json exists in user folder websites too
+      const dataJsonPath = path.join(websiteDir, 'data', 'data.json');
+      if (!fs.existsSync(dataJsonPath)) {
+        const websiteData = {
+          template: newContent.template || 'user-created',
+          userData: newContent.userData || {},
+          owner: username,
+          created: new Date().toISOString(),
+          version: '1.0',
+          dns: newContent.dns,
+          type: 'user-folder-website',
+          folder_path: `websites/${newContent.dns}`
+        };
+        fs.writeFileSync(dataJsonPath, JSON.stringify(websiteData, null, 2));
+      }
+      
       // Update folder contents tracking
       if (!folder_contents[username]) folder_contents[username] = { files: {}, websites: {} };
       folder_contents[username].websites[newContent.dns] = {
         estimated_size: contentSize,
         files: Object.keys(newContent.files),
-        created: new Date().toISOString()
+        created: new Date().toISOString(),
+        has_data_json: true
       };
       
     } else if (contentType === 'file') {
@@ -647,6 +668,10 @@ app.post('/command', requireAuth, async (req, res) => {
         const tempDir = path.join(__dirname, 'temp', `webapp-${Date.now()}`);
         fs.mkdirSync(tempDir, { recursive: true });
 
+        // Ensure data directory exists
+        const dataDir = path.join(tempDir, 'data');
+        fs.mkdirSync(dataDir, { recursive: true });
+
         // Write all files
         for (const [filename, content] of Object.entries(files)) {
           const filePath = path.join(tempDir, filename);
@@ -662,13 +687,29 @@ app.post('/command', requireAuth, async (req, res) => {
           file_ownership[filename] = userId;
         }
 
+        // IMPORTANT: Always create data.json file even if not provided
+        const dataJsonPath = path.join(tempDir, 'data', 'data.json');
+        if (!fs.existsSync(dataJsonPath)) {
+          const defaultData = {
+            template: metadata.template || 'custom',
+            userData: metadata.userData || {},
+            owner: userId,
+            created: new Date().toISOString(),
+            version: '1.0',
+            dns: dns,
+            type: 'webapp'
+          };
+          fs.writeFileSync(dataJsonPath, JSON.stringify(defaultData, null, 2));
+        }
+
         // Add metadata
         const metaPath = path.join(tempDir, 'meta.json');
         fs.writeFileSync(metaPath, JSON.stringify({
           ...metadata,
           owner: userId,
           created: new Date().toISOString(),
-          type: 'webapp'
+          type: 'webapp',
+          has_data_json: true
         }, null, 2));
 
         // Upload to IPFS
@@ -1052,6 +1093,32 @@ app.post('/command', requireAuth, async (req, res) => {
           
         } catch (err) {
           return res.status(400).json({ error: err.message });
+        }
+      }
+
+      case 'debug-site-structure': {
+        const { dns } = args;
+        
+        if (!dns_map[dns]) {
+          return res.status(404).json({ error: 'Site not found' });
+        }
+        
+        try {
+          const site = dns_map[dns];
+          const tree = await getIPFSTree(site.cid);
+          
+          return res.json({
+            dns,
+            cid: site.cid,
+            structure: tree,
+            has_data_folder: !!tree.data,
+            has_data_json: !!(tree.data && tree.data['data.json']),
+            files: Object.keys(tree),
+            type: site.type,
+            owner: site.owner
+          });
+        } catch (err) {
+          return res.status(500).json({ error: 'Failed to analyze site structure: ' + err.message });
         }
       }
 
