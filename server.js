@@ -852,40 +852,48 @@ app.post('/command', requireAuth, async (req, res) => {
       case 'list-user-sites': {
         // Get user's sites from both old system and new folder system
         const userSites = user_directories[req.userId]?.dns || [];
-        const folderSites = [];
+        const allSites = [];
         
         console.log('Loading sites for user:', req.userId, 'alias:', req.userAlias);
-        console.log('User sites from directories:', userSites);
         
-        // If user has an alias, get sites from their folder
-        if (req.userAlias && folder_contents[req.userAlias]) {
-          const websites = folder_contents[req.userAlias].websites || {};
-          console.log('Folder websites:', websites);
+        // Process all user sites
+        userSites.forEach(dns => {
+          const site = dns_map[dns];
+          if (!site) return;
           
-          Object.entries(websites).forEach(([dns, siteInfo]) => {
-            if (dns_map[dns]) {
-              folderSites.push({
-                dns,
-                ...dns_map[dns],
-                versions: cid_history[dns]?.length || 1,
-                in_user_folder: true,
-                folder_path: `websites/${dns}`
-              });
-            }
-          });
-        }
-        
-        // Get traditional sites
-        const traditionalSites = userSites.map(dns => ({
-          dns,
-          ...dns_map[dns],
-          versions: cid_history[dns]?.length || 1,
-          in_user_folder: false
-        })).filter(site => site.cid); // Filter out sites without CID
-        
-        // Combine both types
-        const allSites = [...folderSites, ...traditionalSites];
-        
+          if (site.type === 'user-folder-website' && site.user_folder === req.userAlias) {
+            // User folder website - get current folder CID
+            const currentFolderCID = user_folders[req.userAlias]?.cid;
+            allSites.push({
+              dns,
+              cid: currentFolderCID, // Current folder CID
+              type: site.type,
+              created: site.created,
+              updated: site.updated,
+              owner: site.owner,
+              versions: cid_history[dns]?.length || 1,
+              in_user_folder: true,
+              folder_path: site.folder_path,
+              website_url: `https://uservault.trustgrid.com:8080/ipfs/${currentFolderCID}/${site.folder_path}`,
+              platform_url: `https://synqstorage.trustgrid.com:3000/site/${dns}`
+            });
+          } else {
+            // Traditional direct website
+            allSites.push({
+              dns,
+              cid: site.cid,
+              type: site.type,
+              created: site.created,
+              updated: site.updated,
+              owner: site.owner,
+              versions: cid_history[dns]?.length || 1,
+              in_user_folder: false,
+              website_url: `https://uservault.trustgrid.com:8080/ipfs/${site.cid}`,
+              platform_url: `https://synqstorage.trustgrid.com:3000/site/${dns}`
+            });
+          }
+        });
+  
         console.log('Total sites found:', allSites.length);
         
         return res.json({ 
@@ -1022,7 +1030,7 @@ app.post('/command', requireAuth, async (req, res) => {
       case 'upload-to-user-folder': {
         const { username, type, content } = args;
         
-        // Verify user owns this folder or is admin
+        // Verify user owns this folder
         if (username !== req.userAlias) {
           return res.status(403).json({ error: 'Access denied to this folder' });
         }
@@ -1039,35 +1047,35 @@ app.post('/command', requireAuth, async (req, res) => {
               Buffer.byteLength(fileContent, 'utf8') : 
               Buffer.byteLength(fileContent, 'base64');
           });
-        } else if (type === 'file') {
-          contentSize = typeof content.content === 'string' ? 
-            Buffer.byteLength(content.content, 'utf8') : 
-            Buffer.byteLength(content.content, 'base64');
         }
         
         try {
           const result = await updateUserFolder(username, content, type, contentSize);
           
-          // If it's a website, also update DNS mapping to point to user folder
+          // FIXED: Handle website DNS mapping correctly
           if (type === 'website' && content.dns) {
             const websitePath = `websites/${content.dns}`;
+            
+            // DON'T point DNS to folder CID - use special user folder reference
             dns_map[content.dns] = {
-              cid: result.newCID,
-              owner: req.userId,
-              created: new Date().toISOString(),
-              updated: new Date().toISOString(),
               type: 'user-folder-website',
               user_folder: username,
-              folder_path: websitePath
+              folder_path: websitePath,
+              owner: req.userId,
+              created: dns_map[content.dns]?.created || new Date().toISOString(),
+              updated: new Date().toISOString(),
+              // Store current folder CID for reference but don't use it for routing
+              current_folder_cid: result.newCID
             };
             
-            // Add to cid history
+            // Add to cid history with folder reference
             if (!cid_history[content.dns]) cid_history[content.dns] = [];
             cid_history[content.dns].push({
-              cid: result.newCID,
+              folder_cid: result.newCID,
               timestamp: new Date().toISOString(),
               version: cid_history[content.dns].length + 1,
-              action: 'Created in user folder'
+              action: 'Created/Updated in user folder',
+              path: websitePath
             });
             
             // Add to user directory
@@ -1086,8 +1094,8 @@ app.post('/command', requireAuth, async (req, res) => {
             quota_used: result.quotaUsed,
             quota_available: user_folders[username].quota_limit - result.quotaUsed,
             website_url: type === 'website' ? 
-              `http://localhost:8080/ipfs/${result.newCID}/websites/${content.dns}` : null,
-            folder_url: `http://localhost:8080/ipfs/${result.newCID}`,
+              `https://uservault.trustgrid.com:8080/ipfs/${result.newCID}/websites/${content.dns}` : null,
+            folder_url: `https://uservault.trustgrid.com:8080/ipfs/${result.newCID}`,
             message: `${type} uploaded to user folder successfully`
           });
           
@@ -1119,6 +1127,75 @@ app.post('/command', requireAuth, async (req, res) => {
           });
         } catch (err) {
           return res.status(500).json({ error: 'Failed to analyze site structure: ' + err.message });
+        }
+      }
+
+      case 'edit-user-folder-website': {
+        const { dns, content } = args;
+        
+        const site = dns_map[dns];
+        if (!site || site.type !== 'user-folder-website') {
+          return res.status(404).json({ error: 'User folder website not found' });
+        }
+        
+        if (site.user_folder !== req.userAlias) {
+          return res.status(403).json({ error: 'Access denied' });
+        }
+        
+        try {
+          // Get current folder
+          const currentFolderCID = user_folders[req.userAlias].cid;
+          const tempDir = path.join(__dirname, 'temp', `edit-${req.userAlias}-${Date.now()}`);
+          
+          // Download current folder
+          await execPromise(`ipfs get ${currentFolderCID} -o ${tempDir}`);
+          const folderDir = path.join(tempDir, currentFolderCID);
+          
+          // Update the specific website's data.json
+          const websiteDir = path.join(folderDir, site.folder_path);
+          const dataJsonPath = path.join(websiteDir, 'data', 'data.json');
+          
+          // Ensure data directory exists
+          fs.mkdirSync(path.dirname(dataJsonPath), { recursive: true });
+          
+          // Write updated content
+          fs.writeFileSync(dataJsonPath, content);
+          
+          // Re-upload folder
+          const result = await execPromise(`ipfs add -r .`, folderDir);
+          const lines = result.trim().split('\n');
+          const newFolderCID = lines[lines.length - 1].split(' ')[1];
+          
+          // Update user folder CID
+          user_folders[req.userAlias].cid = newFolderCID;
+          user_folders[req.userAlias].updated = new Date().toISOString();
+          
+          // Update DNS mapping with new folder CID reference
+          dns_map[dns].current_folder_cid = newFolderCID;
+          dns_map[dns].updated = new Date().toISOString();
+          
+          // Add to history
+          cid_history[dns].push({
+            folder_cid: newFolderCID,
+            timestamp: new Date().toISOString(),
+            version: cid_history[dns].length + 1,
+            action: 'Data edited',
+            path: site.folder_path
+          });
+          
+          // Cleanup
+          fs.rmSync(tempDir, { recursive: true, force: true });
+          saveData();
+          
+          return res.json({
+            dns,
+            newFolderCID,
+            website_url: `https://uservault.trustgrid.com:8080/ipfs/${newFolderCID}/${site.folder_path}`,
+            message: 'Website data updated successfully'
+          });
+          
+        } catch (err) {
+          return res.status(500).json({ error: 'Failed to update website: ' + err.message });
         }
       }
 
@@ -1435,6 +1512,32 @@ app.post('/upload-zip', requireAuth, upload.single('zipfile'), async (req, res) 
 app.post('/resolve-ipfs', async (req, res) => {
   let { cid, filePath = '' } = req.body;
   
+  // Special handling for user folder websites
+  if (filePath.includes('websites/') && filePath.includes('data/data.json')) {
+    // This is a request for website data in a user folder
+    const pathParts = filePath.split('/');
+    const websiteIndex = pathParts.indexOf('websites');
+    
+    if (websiteIndex >= 0 && pathParts.length > websiteIndex + 2) {
+      const websiteName = pathParts[websiteIndex + 1];
+      
+      // Check if this website exists in DNS mapping
+      const site = Object.values(dns_map).find(s => 
+        s.type === 'user-folder-website' && 
+        s.folder_path === `websites/${websiteName}`
+      );
+      
+      if (site) {
+        // Get current folder CID
+        const currentFolderCID = user_folders[site.user_folder]?.cid;
+        if (currentFolderCID) {
+          cid = currentFolderCID;
+          console.log(`Redirecting to current folder CID: ${currentFolderCID} for path: ${filePath}`);
+        }
+      }
+    }
+  }
+  
   const fileURL = `http://localhost:8080/ipfs/${cid}/${filePath}`;
   console.log("🔗 Proxying:", fileURL);
   
@@ -1480,6 +1583,41 @@ app.post('/resolve-ipfs', async (req, res) => {
 
 // ========== Platform Stats ==========
 
+// app.get('/site/:dns', async (req, res) => {
+//   const dns = req.params.dns;
+//   const site = dns_map[dns];
+  
+//   if (!site) {
+//     return res.status(404).send(`
+//       <!DOCTYPE html>
+//       <html>
+//       <head>
+//         <title>Site Not Found</title>
+//         <style>
+//           body { font-family: Arial, sans-serif; text-align: center; padding: 100px; background: #f5f5f5; }
+//           .error { background: white; padding: 60px; border-radius: 10px; box-shadow: 0 10px 30px rgba(0,0,0,0.1); display: inline-block; }
+//           h1 { color: #e74c3c; margin-bottom: 20px; }
+//           p { color: #666; margin-bottom: 30px; }
+//           a { color: #3498db; text-decoration: none; }
+//         </style>
+//       </head>
+//       <body>
+//         <div class="error">
+//           <h1>🌐 Site Not Found</h1>
+//           <p>The site <strong>${dns}</strong> does not exist on this IPFS platform.</p>
+//           <a href="http://localhost:3000/">← Back to Platform</a>
+//         </div>
+//       </body>
+//       </html>
+//     `);
+//   }
+  
+//   // Redirect to current IPFS content
+//   res.redirect(`http://localhost:8080/ipfs/${site.cid}`);
+// });
+
+// Enhanced resolve-dns with better formatting
+
 app.get('/site/:dns', async (req, res) => {
   const dns = req.params.dns;
   const site = dns_map[dns];
@@ -1488,32 +1626,33 @@ app.get('/site/:dns', async (req, res) => {
     return res.status(404).send(`
       <!DOCTYPE html>
       <html>
-      <head>
-        <title>Site Not Found</title>
-        <style>
-          body { font-family: Arial, sans-serif; text-align: center; padding: 100px; background: #f5f5f5; }
-          .error { background: white; padding: 60px; border-radius: 10px; box-shadow: 0 10px 30px rgba(0,0,0,0.1); display: inline-block; }
-          h1 { color: #e74c3c; margin-bottom: 20px; }
-          p { color: #666; margin-bottom: 30px; }
-          a { color: #3498db; text-decoration: none; }
-        </style>
-      </head>
+      <head><title>Site Not Found</title></head>
       <body>
-        <div class="error">
-          <h1>🌐 Site Not Found</h1>
-          <p>The site <strong>${dns}</strong> does not exist on this IPFS platform.</p>
-          <a href="http://localhost:3000/">← Back to Platform</a>
-        </div>
+        <h1>🌐 Site Not Found</h1>
+        <p>The site <strong>${dns}</strong> does not exist on this platform.</p>
+        <a href="https://synqstorage.trustgrid.com:3000/">← Back to Platform</a>
       </body>
       </html>
     `);
   }
   
-  // Redirect to current IPFS content
-  res.redirect(`http://localhost:8080/ipfs/${site.cid}`);
+  // FIXED: Handle user folder websites correctly
+  if (site.type === 'user-folder-website' && site.user_folder) {
+    // Get current folder CID
+    const currentFolderCID = user_folders[site.user_folder]?.cid;
+    if (!currentFolderCID) {
+      return res.status(404).send('User folder not found');
+    }
+    
+    // Redirect to current folder CID + path
+    const websiteURL = `https://uservault.trustgrid.com:8080/ipfs/${currentFolderCID}/${site.folder_path}`;
+    return res.redirect(websiteURL);
+  } else {
+    // Traditional direct IPFS website
+    return res.redirect(`https://uservault.trustgrid.com:8080/ipfs/${site.cid}`);
+  }
 });
 
-// Enhanced resolve-dns with better formatting
 app.get('/resolve-dns/:dns', async (req, res) => {
   const dns = req.params.dns;
   const site = dns_map[dns];
