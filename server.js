@@ -1358,8 +1358,8 @@ app.post('/command', requireAuth, async (req, res) => {
               versions: cid_history[dns]?.length || 1,
               in_user_folder: true,
               folder_path: site.folder_path,
-              website_url: `https://uservault.trustgrid.com:8080/ipfs/${currentFolderCID}/${site.folder_path}`,
-              platform_url: `https://synqstorage.trustgrid.com:3000/site/${dns}`
+              website_url: `https://uservault.trustgrid.com/ipfs/${currentFolderCID}/${site.folder_path}`,
+              platform_url: `https://synqstorage.trustgrid.com/site/${dns}`
             });
           } else {
             // Traditional direct website
@@ -1372,8 +1372,8 @@ app.post('/command', requireAuth, async (req, res) => {
               owner: site.owner,
               versions: cid_history[dns]?.length || 1,
               in_user_folder: false,
-              website_url: `https://uservault.trustgrid.com:8080/ipfs/${site.cid}`,
-              platform_url: `https://synqstorage.trustgrid.com:3000/site/${dns}`
+              website_url: `https://uservault.trustgrid.com/ipfs/${site.cid}`,
+              platform_url: `https://synqstorage.trustgrid.com/site/${dns}`
             });
           }
         });
@@ -1568,7 +1568,7 @@ app.post('/command', requireAuth, async (req, res) => {
             
             console.log(`✅ Website ${content.dns} created in folder ${username}`);
             console.log(`📂 Current folder CID: ${result.newCID}`);
-            console.log(`🔗 Website URL: https://uservault.trustgrid.com:8080/ipfs/${result.newCID}/${websitePath}`);
+            console.log(`🔗 Website URL: https://uservault.trustgrid.com/ipfs/${result.newCID}/${websitePath}`);
           }
           
           saveData();
@@ -1581,8 +1581,8 @@ app.post('/command', requireAuth, async (req, res) => {
             quota_used: result.quotaUsed,
             quota_available: user_folders[username].quota_limit - result.quotaUsed,
             website_url: type === 'website' ? 
-              `https://uservault.trustgrid.com:8080/ipfs/${result.newCID}/websites/${content.dns}` : null,
-            folder_url: `https://uservault.trustgrid.com:8080/ipfs/${result.newCID}`,
+              `https://uservault.trustgrid.com/ipfs/${result.newCID}/websites/${content.dns}` : null,
+            folder_url: `https://uservault.trustgrid.com/ipfs/${result.newCID}`,
             cid_redirects_count: Object.keys(cid_redirects).length,
             message: `${type} uploaded to user folder successfully`
           });
@@ -1652,7 +1652,7 @@ app.post('/command', requireAuth, async (req, res) => {
           return res.json({
             dns,
             newFolderCID,
-            website_url: `https://uservault.trustgrid.com:8080/ipfs/${newFolderCID}/${site.folder_path}`,
+            website_url: `https://uservault.trustgrid.com/ipfs/${newFolderCID}/${site.folder_path}`,
             message: 'Website data updated successfully'
           });
           
@@ -1798,7 +1798,7 @@ app.post('/command', requireAuth, async (req, res) => {
                 dns,
                 old_folder_cid: oldCID,
                 new_folder_cid: newCID,
-                website_url: `https://uservault.trustgrid.com:8080/ipfs/${newCID}/websites/${dns}`,
+                website_url: `https://uservault.trustgrid.com/ipfs/${newCID}/websites/${dns}`,
                 existing_files_preserved: existingFiles,
                 message: 'Website data updated successfully - all files preserved'
               });
@@ -1888,7 +1888,7 @@ app.post('/command', requireAuth, async (req, res) => {
                 dns,
                 old_cid: oldCID,
                 new_cid: newCID,
-                website_url: `https://uservault.trustgrid.com:8080/ipfs/${newCID}`,
+                website_url: `https://uservault.trustgrid.com/ipfs/${newCID}`,
                 existing_files_preserved: existingFiles,
                 message: 'Direct website data updated successfully'
               });
@@ -1945,7 +1945,7 @@ app.post('/command', requireAuth, async (req, res) => {
               type: 'user-folder-website',
               folder_cid: currentFolderCID,
               path: `websites/${dns}`,
-              website_url: `https://uservault.trustgrid.com:8080/ipfs/${currentFolderCID}/websites/${dns}`,
+              website_url: `https://uservault.trustgrid.com/ipfs/${currentFolderCID}/websites/${dns}`,
               user_folder: site.user_folder
             };
             
@@ -1963,7 +1963,7 @@ app.post('/command', requireAuth, async (req, res) => {
             websiteInfo = {
               type: 'direct-website',
               cid: site.cid,
-              website_url: `https://uservault.trustgrid.com:8080/ipfs/${site.cid}`
+              website_url: `https://uservault.trustgrid.com/ipfs/${site.cid}`
             };
           }
           
@@ -2065,8 +2065,8 @@ app.post('/command', requireAuth, async (req, res) => {
             status: missing.length === 0 ? 'All websites exist in IPFS' : 'Some websites missing',
             test_urls: actualWebsites.map(dns => ({
               dns,
-              url: `https://uservault.trustgrid.com:8080/ipfs/${currentCID}/websites/${dns}`,
-              platform_url: `https://synqstorage.trustgrid.com:3000/site/${dns}`
+              url: `https://uservault.trustgrid.com/ipfs/${currentCID}/websites/${dns}`,
+              platform_url: `https://synqstorage.trustgrid.com/site/${dns}`
             }))
           });
           
@@ -2155,11 +2155,11 @@ app.post('/command', requireAuth, async (req, res) => {
             internal_folder_data: folderData,
             internal_contents: contentsData,
             cid_history: historyData,
-            gateway_url: `https://uservault.trustgrid.com:8080/ipfs/${targetCID}`,
+            gateway_url: `https://uservault.trustgrid.com/ipfs/${targetCID}`,
             debug_urls: {
-              browse_folder: `https://uservault.trustgrid.com:8080/ipfs/${targetCID}`,
-              websites_folder: `https://uservault.trustgrid.com:8080/ipfs/${targetCID}/websites`,
-              files_folder: `https://uservault.trustgrid.com:8080/ipfs/${targetCID}/files`
+              browse_folder: `https://uservault.trustgrid.com/ipfs/${targetCID}`,
+              websites_folder: `https://uservault.trustgrid.com/ipfs/${targetCID}/websites`,
+              files_folder: `https://uservault.trustgrid.com/ipfs/${targetCID}/files`
             }
           });
           
@@ -2206,11 +2206,11 @@ app.post('/command', requireAuth, async (req, res) => {
             
             // Test various URL patterns
             const testUrls = [
-              `https://uservault.trustgrid.com:8080/ipfs/${currentCID}`,
-              `https://uservault.trustgrid.com:8080/ipfs/${currentCID}/websites`,
-              `https://uservault.trustgrid.com:8080/ipfs/${currentCID}/websites/${dns}`,
-              `https://uservault.trustgrid.com:8080/ipfs/${currentCID}/${expectedPath}`,
-              `https://uservault.trustgrid.com:8080/ipfs/${currentCID}/${expectedPath}/index.html`
+              `https://uservault.trustgrid.com/ipfs/${currentCID}`,
+              `https://uservault.trustgrid.com/ipfs/${currentCID}/websites`,
+              `https://uservault.trustgrid.com/ipfs/${currentCID}/websites/${dns}`,
+              `https://uservault.trustgrid.com/ipfs/${currentCID}/${expectedPath}`,
+              `https://uservault.trustgrid.com/ipfs/${currentCID}/${expectedPath}/index.html`
             ];
             
             debugInfo.test_urls = testUrls;
@@ -2250,8 +2250,8 @@ app.post('/command', requireAuth, async (req, res) => {
             debugInfo.type = 'direct_ipfs';
             debugInfo.direct_cid = site.cid;
             debugInfo.test_urls = [
-              `https://uservault.trustgrid.com:8080/ipfs/${site.cid}`,
-              `https://uservault.trustgrid.com:8080/ipfs/${site.cid}/index.html`
+              `https://uservault.trustgrid.com/ipfs/${site.cid}`,
+              `https://uservault.trustgrid.com/ipfs/${site.cid}/index.html`
             ];
           }
           
@@ -2312,7 +2312,7 @@ app.post('/command', requireAuth, async (req, res) => {
           
           // Test local IPFS access
           const localURL = `http://localhost:8080/ipfs/${cid}/${path}`;
-          const productionURL = `https://uservault.trustgrid.com:8080/ipfs/${cid}/${path}`;
+          const productionURL = `https://uservault.trustgrid.com/ipfs/${cid}/${path}`;
           
           let localResult = null;
           let productionResult = null;
@@ -2661,7 +2661,7 @@ app.post('/command', requireAuth, async (req, res) => {
             deleted_count: deletedWebsites.length,
             old_cid: oldCID,
             new_cid: newCID,
-            clean_folder_url: `https://uservault.trustgrid.com:8080/ipfs/${newCID}`,
+            clean_folder_url: `https://uservault.trustgrid.com/ipfs/${newCID}`,
             message: `All websites deleted successfully. Folder is now clean.`
           });
           
@@ -3165,9 +3165,9 @@ app.post('/upload-zip', requireAuth, upload.single('zipfile'), async (req, res) 
           fileCount: allFiles.length,
           structure: allFiles,
           is_update: !!existingSite,
-          website_url: `https://uservault.trustgrid.com:8080/ipfs/${result.newCID}/zipwebsites/${dns}`,
-          folder_url: `https://uservault.trustgrid.com:8080/ipfs/${result.newCID}`,
-          platform_url: `https://synqstorage.trustgrid.com:3000/site/${dns}`,
+          website_url: `https://uservault.trustgrid.com/ipfs/${result.newCID}/zipwebsites/${dns}`,
+          folder_url: `https://uservault.trustgrid.com/ipfs/${result.newCID}`,
+          platform_url: `https://synqstorage.trustgrid.com/site/${dns}`,
           type: 'user-folder-zipwebsite',
           quota_used: result.quotaUsed,
           quota_available: user_folders[userAlias].quota_limit - result.quotaUsed,
@@ -3253,7 +3253,7 @@ app.get('/site/:dns', async (req, res) => {
       <body>
         <h1>🌐 Site Not Found</h1>
         <p>The site <strong>${dns}</strong> does not exist on this platform.</p>
-        <a href="https://synqstorage.trustgrid.com:3000/">← Back to Platform</a>
+        <a href="https://synqstorage.trustgrid.com/">← Back to Platform</a>
       </body>
       </html>
     `);
@@ -3277,12 +3277,12 @@ app.get('/site/:dns', async (req, res) => {
       `zipwebsites/${dns}` : 
       `websites/${dns}`;
       
-    const websiteURL = `https://uservault.trustgrid.com:8080/ipfs/${currentFolderCID}/${folderPath}`;
+    const websiteURL = `https://uservault.trustgrid.com/ipfs/${currentFolderCID}/${folderPath}`;
     console.log(`🔗 Redirecting ${dns} (${site.type}) to: ${websiteURL}`);
     return res.redirect(websiteURL);
   } else {
     // Traditional direct IPFS website
-    return res.redirect(`https://uservault.trustgrid.com:8080/ipfs/${site.cid}`);
+    return res.redirect(`https://uservault.trustgrid.com/ipfs/${site.cid}`);
   }
 });
 
