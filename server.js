@@ -30,19 +30,6 @@ const upload = multer({
   limits: { fileSize: 100 * 1024 * 1024 } // 100MB limit
 });
 
-// function saveData() {
-//   const data = {
-//     dns_map,
-//     user_directories,
-//     cid_history,
-//     file_ownership,
-//     access_tokens,
-//     user_folders,        // ADD THIS
-//     folder_contents,     // ADD THIS
-//     timestamp: new Date().toISOString()
-//   };
-//   fs.writeFileSync(DATA_FILE, JSON.stringify(data, null, 2));
-// }
 
 let ipfsDaemon = null;
 
@@ -253,6 +240,244 @@ function checkQuota(username, additionalSize) {
   return (currentUsed + additionalSize) <= limit;
 }
 
+// async function updateUserFolder(username, newContent, contentType, contentSize) {
+//   if (!user_folders[username]) {
+//     throw new Error('User folder not found');
+//   }
+  
+//   // Check quota
+//   if (!checkQuota(username, contentSize)) {
+//     const available = (user_folders[username].quota_limit - user_folders[username].quota_used) / 1024 / 1024;
+//     throw new Error(`Quota exceeded. Available: ${available.toFixed(2)}MB`);
+//   }
+  
+//   // Get current folder content
+//   const currentCID = user_folders[username].cid;
+//   const tempDir = path.join(__dirname, 'temp', `update-user-${username}-${Date.now()}`);
+  
+//   try {
+//     console.log(`📂 Updating user folder for ${username}`);
+//     console.log(`📦 Current CID: ${currentCID}`);
+    
+//     // Create temp directory
+//     fs.mkdirSync(tempDir, { recursive: true });
+    
+//     // Download current folder - FIXED: handle IPFS get properly
+//     console.log(`📥 Downloading current folder...`);
+//     await execPromise(`ipfs get ${currentCID} -o ${tempDir}`);
+    
+//     // CRITICAL FIX: Find the actual content directory
+//     let folderDir;
+//     const tempContents = fs.readdirSync(tempDir);
+//     console.log(`📋 Contents of temp dir:`, tempContents);
+    
+//     if (tempContents.includes(currentCID)) {
+//       // Standard case: /temp/QmXXX/
+//       folderDir = path.join(tempDir, currentCID);
+//     } else if (tempContents.length === 1 && fs.statSync(path.join(tempDir, tempContents[0])).isDirectory()) {
+//       // Alternative case: /temp/some-other-name/
+//       folderDir = path.join(tempDir, tempContents[0]);
+//     } else {
+//       // Content is directly in temp dir
+//       folderDir = tempDir;
+//     }
+    
+//     console.log(`📁 Using folder directory: ${folderDir}`);
+    
+//     // Verify the folder directory exists and check its contents
+//     if (!fs.existsSync(folderDir)) {
+//       console.error(`❌ Folder directory doesn't exist: ${folderDir}`);
+//       console.error(`Available paths:`, tempContents);
+//       throw new Error(`Downloaded folder not found at expected path: ${folderDir}`);
+//     }
+    
+//     const existingItems = fs.readdirSync(folderDir);
+//     console.log(`📋 Existing items in downloaded folder:`, existingItems);
+    
+//     // Ensure websites directory exists and check what's in it
+//     const websitesDir = path.join(folderDir, 'websites');
+//     if (!fs.existsSync(websitesDir)) {
+//       console.log(`📁 Creating websites directory`);
+//       fs.mkdirSync(websitesDir, { recursive: true });
+//     } else {
+//       const existingWebsites = fs.readdirSync(websitesDir);
+//       console.log(`🌐 Existing websites in downloaded folder:`, existingWebsites);
+//     }
+    
+//     // Add new content based on type
+//     if (contentType === 'website') {
+//       const websiteDir = path.join(folderDir, 'websites', newContent.dns);
+//       console.log(`🌐 Creating new website: ${newContent.dns} at ${websiteDir}`);
+      
+//       // Create website directory
+//       fs.mkdirSync(websiteDir, { recursive: true });
+      
+//       // Ensure data directory exists in website
+//       const dataDir = path.join(websiteDir, 'data');
+//       fs.mkdirSync(dataDir, { recursive: true });
+      
+//       // Copy website files
+//       console.log(`📄 Adding files:`, Object.keys(newContent.files));
+//       for (const [filename, content] of Object.entries(newContent.files)) {
+//         const filePath = path.join(websiteDir, filename);
+//         const fileDir = path.dirname(filePath);
+//         fs.mkdirSync(fileDir, { recursive: true });
+        
+//         if (typeof content === 'string') {
+//           fs.writeFileSync(filePath, content);
+//         } else {
+//           fs.writeFileSync(filePath, Buffer.from(content, 'base64'));
+//         }
+//         console.log(`✅ Created file: ${filename}`);
+//       }
+      
+//       // Create data.json for the website
+//       const dataJsonPath = path.join(websiteDir, 'data', 'data.json');
+//       if (!fs.existsSync(dataJsonPath)) {
+//         const websiteData = {
+//           template: newContent.template || 'user-created',
+//           userData: newContent.userData || {},
+//           owner: username,
+//           created: new Date().toISOString(),
+//           version: '1.0',
+//           dns: newContent.dns,
+//           type: 'user-folder-website',
+//           folder_path: `websites/${newContent.dns}`
+//         };
+//         fs.writeFileSync(dataJsonPath, JSON.stringify(websiteData, null, 2));
+//         console.log(`✅ Created data.json for ${newContent.dns}`);
+//       }
+      
+//       // Update folder contents tracking
+//       if (!folder_contents[username]) folder_contents[username] = { files: {}, websites: {} };
+//       folder_contents[username].websites[newContent.dns] = {
+//         estimated_size: contentSize,
+//         files: Object.keys(newContent.files),
+//         created: new Date().toISOString(),
+//         has_data_json: true
+//       };
+      
+//     } else if (contentType === 'file') {
+//       // Ensure files directory exists
+//       const filesDir = path.join(folderDir, 'files');
+//       if (!fs.existsSync(filesDir)) {
+//         fs.mkdirSync(filesDir, { recursive: true });
+//       }
+      
+//       const filePath = path.join(folderDir, 'files', newContent.filename);
+//       const fileDir = path.dirname(filePath);
+//       fs.mkdirSync(fileDir, { recursive: true });
+      
+//       if (newContent.encoding === 'base64') {
+//         fs.writeFileSync(filePath, Buffer.from(newContent.content, 'base64'));
+//       } else {
+//         fs.writeFileSync(filePath, newContent.content);
+//       }
+      
+//       // Update folder contents tracking
+//       if (!folder_contents[username]) folder_contents[username] = { files: {}, websites: {} };
+//       folder_contents[username].files[newContent.filename] = {
+//         size: contentSize,
+//         type: newContent.type || 'unknown',
+//         created: new Date().toISOString()
+//       };
+//     }
+    
+//     // VERIFY: Check final state before upload
+//     const finalWebsitesDir = path.join(folderDir, 'websites');
+//     if (fs.existsSync(finalWebsitesDir)) {
+//       const finalWebsites = fs.readdirSync(finalWebsitesDir);
+//       console.log(`🌐 Final websites before upload:`, finalWebsites);
+      
+//       // Verify each website has proper structure
+//       finalWebsites.forEach(websiteName => {
+//         const websitePath = path.join(finalWebsitesDir, websiteName);
+//         if (fs.existsSync(websitePath) && fs.statSync(websitePath).isDirectory()) {
+//           const websiteFiles = fs.readdirSync(websitePath);
+//           console.log(`  📂 ${websiteName}:`, websiteFiles);
+//         }
+//       });
+//     } else {
+//       console.error(`❌ Websites directory missing before upload!`);
+//     }
+    
+//     // Re-upload to IPFS
+//     console.log(`📤 Re-uploading folder to IPFS from: ${folderDir}`);
+//     const result = await execPromise(`ipfs add -r .`, folderDir);
+//     const lines = result.trim().split('\n');
+//     const newCID = lines[lines.length - 1].split(' ')[1];
+    
+//     console.log(`✅ New CID: ${newCID}`);
+    
+//     // Update tracking systems
+//     const oldCID = user_folders[username].cid;
+    
+//     // 1. Update user folder data
+//     user_folders[username].cid = newCID;
+//     user_folders[username].quota_used += contentSize;
+//     user_folders[username].updated = new Date().toISOString();
+    
+//     // 2. Track CID history
+//     if (!user_folder_cid_history) user_folder_cid_history = {};
+//     if (!user_folder_cid_history[username]) {
+//       user_folder_cid_history[username] = [];
+//     }
+    
+//     const currentWebsites = Object.keys(folder_contents[username].websites || {});
+    
+//     user_folder_cid_history[username].push({
+//       cid: newCID,
+//       previous_cid: oldCID,
+//       timestamp: new Date().toISOString(),
+//       action: contentType === 'website' ? `Added website: ${newContent.dns}` : `Added file: ${newContent.filename}`,
+//       websites: [...currentWebsites],
+//       version: user_folder_cid_history[username].length + 1
+//     });
+    
+//     // 3. Create CID redirects
+//     if (!cid_redirects) cid_redirects = {};
+//     if (oldCID !== newCID) {
+//       cid_redirects[oldCID] = newCID;
+//     }
+    
+//     // 4. Update website CID mapping
+//     if (!website_cid_mapping) website_cid_mapping = {};
+//     currentWebsites.forEach(websiteDns => {
+//       if (!website_cid_mapping[websiteDns]) {
+//         website_cid_mapping[websiteDns] = {
+//           creation_folder_cid: newCID,
+//           path: `websites/${websiteDns}`
+//         };
+//       }
+//       website_cid_mapping[websiteDns].current_folder_cid = newCID;
+//       website_cid_mapping[websiteDns].last_updated = new Date().toISOString();
+//     });
+    
+//     // Update counts
+//     if (contentType === 'website') {
+//       user_folders[username].websites_count = Object.keys(folder_contents[username].websites).length;
+//     }
+//     user_folders[username].files_count = Object.keys(folder_contents[username].files || {}).length;
+    
+//     // Cleanup
+//     fs.rmSync(tempDir, { recursive: true, force: true });
+    
+//     console.log(`📦 Successfully updated ${username} folder: ${oldCID} → ${newCID}`);
+//     console.log(`🌐 Total websites now: ${currentWebsites.length}`);
+    
+//     return { oldCID, newCID, quotaUsed: user_folders[username].quota_used };
+    
+//   } catch (err) {
+//     console.error(`❌ Error updating user folder:`, err);
+//     if (fs.existsSync(tempDir)) {
+//       fs.rmSync(tempDir, { recursive: true, force: true });
+//     }
+//     throw err;
+//   }
+// }
+
+// Persistent storage
+
 async function updateUserFolder(username, newContent, contentType, contentSize) {
   if (!user_folders[username]) {
     throw new Error('User folder not found');
@@ -269,68 +494,66 @@ async function updateUserFolder(username, newContent, contentType, contentSize) 
   const tempDir = path.join(__dirname, 'temp', `update-user-${username}-${Date.now()}`);
   
   try {
-    console.log(`📂 Updating user folder for ${username}`);
+    console.log(`📂 Updating user folder for ${username} (${contentType})`);
     console.log(`📦 Current CID: ${currentCID}`);
     
-    // Create temp directory
+    // Create temp directory and download current folder
     fs.mkdirSync(tempDir, { recursive: true });
-    
-    // Download current folder - FIXED: handle IPFS get properly
-    console.log(`📥 Downloading current folder...`);
     await execPromise(`ipfs get ${currentCID} -o ${tempDir}`);
     
-    // CRITICAL FIX: Find the actual content directory
+    // Find the actual content directory
     let folderDir;
     const tempContents = fs.readdirSync(tempDir);
-    console.log(`📋 Contents of temp dir:`, tempContents);
     
     if (tempContents.includes(currentCID)) {
-      // Standard case: /temp/QmXXX/
       folderDir = path.join(tempDir, currentCID);
     } else if (tempContents.length === 1 && fs.statSync(path.join(tempDir, tempContents[0])).isDirectory()) {
-      // Alternative case: /temp/some-other-name/
       folderDir = path.join(tempDir, tempContents[0]);
     } else {
-      // Content is directly in temp dir
       folderDir = tempDir;
     }
     
     console.log(`📁 Using folder directory: ${folderDir}`);
     
-    // Verify the folder directory exists and check its contents
-    if (!fs.existsSync(folderDir)) {
-      console.error(`❌ Folder directory doesn't exist: ${folderDir}`);
-      console.error(`Available paths:`, tempContents);
-      throw new Error(`Downloaded folder not found at expected path: ${folderDir}`);
-    }
-    
     const existingItems = fs.readdirSync(folderDir);
     console.log(`📋 Existing items in downloaded folder:`, existingItems);
     
-    // Ensure websites directory exists and check what's in it
+    // Ensure required directories exist
     const websitesDir = path.join(folderDir, 'websites');
+    const zipWebsitesDir = path.join(folderDir, 'zipwebsites');
+    const filesDir = path.join(folderDir, 'files');
+    
     if (!fs.existsSync(websitesDir)) {
-      console.log(`📁 Creating websites directory`);
       fs.mkdirSync(websitesDir, { recursive: true });
-    } else {
-      const existingWebsites = fs.readdirSync(websitesDir);
-      console.log(`🌐 Existing websites in downloaded folder:`, existingWebsites);
+      console.log(`📁 Created websites directory`);
     }
+    
+    if (!fs.existsSync(zipWebsitesDir)) {
+      fs.mkdirSync(zipWebsitesDir, { recursive: true });
+      console.log(`📁 Created zipwebsites directory`);
+    }
+    
+    if (!fs.existsSync(filesDir)) {
+      fs.mkdirSync(filesDir, { recursive: true });
+      console.log(`📁 Created files directory`);
+    }
+    
+    // Check existing content
+    const existingWebsites = fs.existsSync(websitesDir) ? fs.readdirSync(websitesDir) : [];
+    const existingZipWebsites = fs.existsSync(zipWebsitesDir) ? fs.readdirSync(zipWebsitesDir) : [];
+    
+    console.log(`🌐 Existing template websites:`, existingWebsites);
+    console.log(`📦 Existing ZIP websites:`, existingZipWebsites);
     
     // Add new content based on type
     if (contentType === 'website') {
+      // Template website goes to websites/
       const websiteDir = path.join(folderDir, 'websites', newContent.dns);
-      console.log(`🌐 Creating new website: ${newContent.dns} at ${websiteDir}`);
+      console.log(`🌐 Creating template website: ${newContent.dns}`);
       
-      // Create website directory
       fs.mkdirSync(websiteDir, { recursive: true });
       
-      // Ensure data directory exists in website
-      const dataDir = path.join(websiteDir, 'data');
-      fs.mkdirSync(dataDir, { recursive: true });
-      
-      // Copy website files
-      console.log(`📄 Adding files:`, Object.keys(newContent.files));
+      // Create website files
       for (const [filename, content] of Object.entries(newContent.files)) {
         const filePath = path.join(websiteDir, filename);
         const fileDir = path.dirname(filePath);
@@ -341,12 +564,12 @@ async function updateUserFolder(username, newContent, contentType, contentSize) 
         } else {
           fs.writeFileSync(filePath, Buffer.from(content, 'base64'));
         }
-        console.log(`✅ Created file: ${filename}`);
       }
       
-      // Create data.json for the website
+      // Ensure data.json exists
       const dataJsonPath = path.join(websiteDir, 'data', 'data.json');
       if (!fs.existsSync(dataJsonPath)) {
+        fs.mkdirSync(path.dirname(dataJsonPath), { recursive: true });
         const websiteData = {
           template: newContent.template || 'user-created',
           userData: newContent.userData || {},
@@ -358,11 +581,10 @@ async function updateUserFolder(username, newContent, contentType, contentSize) 
           folder_path: `websites/${newContent.dns}`
         };
         fs.writeFileSync(dataJsonPath, JSON.stringify(websiteData, null, 2));
-        console.log(`✅ Created data.json for ${newContent.dns}`);
       }
       
-      // Update folder contents tracking
-      if (!folder_contents[username]) folder_contents[username] = { files: {}, websites: {} };
+      // Update tracking
+      if (!folder_contents[username]) folder_contents[username] = { files: {}, websites: {}, zipwebsites: {} };
       folder_contents[username].websites[newContent.dns] = {
         estimated_size: contentSize,
         files: Object.keys(newContent.files),
@@ -370,13 +592,44 @@ async function updateUserFolder(username, newContent, contentType, contentSize) 
         has_data_json: true
       };
       
-    } else if (contentType === 'file') {
-      // Ensure files directory exists
-      const filesDir = path.join(folderDir, 'files');
-      if (!fs.existsSync(filesDir)) {
-        fs.mkdirSync(filesDir, { recursive: true });
+    } else if (contentType === 'zipwebsite') {
+      // ZIP website goes to zipwebsites/
+      const zipWebsiteDir = path.join(folderDir, 'zipwebsites', newContent.dns);
+      console.log(`📦 Creating ZIP website: ${newContent.dns}`);
+      
+      fs.mkdirSync(zipWebsiteDir, { recursive: true });
+      
+      // Copy all extracted files
+      function copyDirectory(src, dest) {
+        const items = fs.readdirSync(src);
+        for (const item of items) {
+          const srcPath = path.join(src, item);
+          const destPath = path.join(dest, item);
+          
+          if (fs.statSync(srcPath).isDirectory()) {
+            fs.mkdirSync(destPath, { recursive: true });
+            copyDirectory(srcPath, destPath);
+          } else {
+            fs.copyFileSync(srcPath, destPath);
+          }
+        }
       }
       
+      copyDirectory(newContent.extractedPath, zipWebsiteDir);
+      console.log(`✅ Copied ZIP content to zipwebsites/${newContent.dns}`);
+      
+      // Update tracking
+      if (!folder_contents[username]) folder_contents[username] = { files: {}, websites: {}, zipwebsites: {} };
+      folder_contents[username].zipwebsites[newContent.dns] = {
+        estimated_size: contentSize,
+        files: newContent.filesList || [],
+        created: new Date().toISOString(),
+        original_filename: newContent.originalFilename,
+        file_count: newContent.fileCount
+      };
+      
+    } else if (contentType === 'file') {
+      // Regular file goes to files/
       const filePath = path.join(folderDir, 'files', newContent.filename);
       const fileDir = path.dirname(filePath);
       fs.mkdirSync(fileDir, { recursive: true });
@@ -387,8 +640,8 @@ async function updateUserFolder(username, newContent, contentType, contentSize) 
         fs.writeFileSync(filePath, newContent.content);
       }
       
-      // Update folder contents tracking
-      if (!folder_contents[username]) folder_contents[username] = { files: {}, websites: {} };
+      // Update tracking
+      if (!folder_contents[username]) folder_contents[username] = { files: {}, websites: {}, zipwebsites: {} };
       folder_contents[username].files[newContent.filename] = {
         size: contentSize,
         type: newContent.type || 'unknown',
@@ -396,23 +649,12 @@ async function updateUserFolder(username, newContent, contentType, contentSize) 
       };
     }
     
-    // VERIFY: Check final state before upload
-    const finalWebsitesDir = path.join(folderDir, 'websites');
-    if (fs.existsSync(finalWebsitesDir)) {
-      const finalWebsites = fs.readdirSync(finalWebsitesDir);
-      console.log(`🌐 Final websites before upload:`, finalWebsites);
-      
-      // Verify each website has proper structure
-      finalWebsites.forEach(websiteName => {
-        const websitePath = path.join(finalWebsitesDir, websiteName);
-        if (fs.existsSync(websitePath) && fs.statSync(websitePath).isDirectory()) {
-          const websiteFiles = fs.readdirSync(websitePath);
-          console.log(`  📂 ${websiteName}:`, websiteFiles);
-        }
-      });
-    } else {
-      console.error(`❌ Websites directory missing before upload!`);
-    }
+    // Verify final structure
+    const finalWebsites = fs.existsSync(websitesDir) ? fs.readdirSync(websitesDir) : [];
+    const finalZipWebsites = fs.existsSync(zipWebsitesDir) ? fs.readdirSync(zipWebsitesDir) : [];
+    
+    console.log(`🌐 Final template websites:`, finalWebsites);
+    console.log(`📦 Final ZIP websites:`, finalZipWebsites);
     
     // Re-upload to IPFS
     console.log(`📤 Re-uploading folder to IPFS from: ${folderDir}`);
@@ -425,41 +667,46 @@ async function updateUserFolder(username, newContent, contentType, contentSize) 
     // Update tracking systems
     const oldCID = user_folders[username].cid;
     
-    // 1. Update user folder data
+    // Update user folder data
     user_folders[username].cid = newCID;
     user_folders[username].quota_used += contentSize;
     user_folders[username].updated = new Date().toISOString();
     
-    // 2. Track CID history
+    // Track CID history
     if (!user_folder_cid_history) user_folder_cid_history = {};
-    if (!user_folder_cid_history[username]) {
-      user_folder_cid_history[username] = [];
-    }
+    if (!user_folder_cid_history[username]) user_folder_cid_history[username] = [];
     
     const currentWebsites = Object.keys(folder_contents[username].websites || {});
+    const currentZipWebsites = Object.keys(folder_contents[username].zipwebsites || {});
+    const allWebsites = [...currentWebsites, ...currentZipWebsites];
     
     user_folder_cid_history[username].push({
       cid: newCID,
       previous_cid: oldCID,
       timestamp: new Date().toISOString(),
-      action: contentType === 'website' ? `Added website: ${newContent.dns}` : `Added file: ${newContent.filename}`,
-      websites: [...currentWebsites],
+      action: contentType === 'zipwebsite' ? `Added ZIP website: ${newContent.dns}` : 
+              contentType === 'website' ? `Added template website: ${newContent.dns}` : 
+              `Added file: ${newContent.filename}`,
+      websites: currentWebsites,
+      zipwebsites: currentZipWebsites,
+      total_websites: allWebsites,
       version: user_folder_cid_history[username].length + 1
     });
     
-    // 3. Create CID redirects
+    // Create CID redirects
     if (!cid_redirects) cid_redirects = {};
     if (oldCID !== newCID) {
       cid_redirects[oldCID] = newCID;
     }
     
-    // 4. Update website CID mapping
+    // Update website CID mapping
     if (!website_cid_mapping) website_cid_mapping = {};
-    currentWebsites.forEach(websiteDns => {
+    allWebsites.forEach(websiteDns => {
       if (!website_cid_mapping[websiteDns]) {
+        const isZipWebsite = currentZipWebsites.includes(websiteDns);
         website_cid_mapping[websiteDns] = {
           creation_folder_cid: newCID,
-          path: `websites/${websiteDns}`
+          path: isZipWebsite ? `zipwebsites/${websiteDns}` : `websites/${websiteDns}`
         };
       }
       website_cid_mapping[websiteDns].current_folder_cid = newCID;
@@ -469,6 +716,8 @@ async function updateUserFolder(username, newContent, contentType, contentSize) 
     // Update counts
     if (contentType === 'website') {
       user_folders[username].websites_count = Object.keys(folder_contents[username].websites).length;
+    } else if (contentType === 'zipwebsite') {
+      user_folders[username].zipwebsites_count = Object.keys(folder_contents[username].zipwebsites).length;
     }
     user_folders[username].files_count = Object.keys(folder_contents[username].files || {}).length;
     
@@ -476,7 +725,7 @@ async function updateUserFolder(username, newContent, contentType, contentSize) 
     fs.rmSync(tempDir, { recursive: true, force: true });
     
     console.log(`📦 Successfully updated ${username} folder: ${oldCID} → ${newCID}`);
-    console.log(`🌐 Total websites now: ${currentWebsites.length}`);
+    console.log(`🌐 Template websites: ${currentWebsites.length}, ZIP websites: ${currentZipWebsites.length}`);
     
     return { oldCID, newCID, quotaUsed: user_folders[username].quota_used };
     
@@ -489,8 +738,26 @@ async function updateUserFolder(username, newContent, contentType, contentSize) 
   }
 }
 
-// Persistent storage
 const DATA_FILE = path.join(__dirname, 'platform-data.json');
+
+// function saveData() {
+//   const data = {
+//     dns_map,
+//     user_directories,
+//     cid_history,
+//     file_ownership,
+//     access_tokens,
+//     user_folders,
+//     folder_contents,
+//     user_aliases,
+//     user_folder_cid_history,
+//     website_cid_mapping,
+//     cid_redirects,
+//     user_credentials,  // ADD THIS
+//     timestamp: new Date().toISOString()
+//   };
+//   fs.writeFileSync(DATA_FILE, JSON.stringify(data, null, 2));
+// }
 
 function saveData() {
   const data = {
@@ -500,12 +767,12 @@ function saveData() {
     file_ownership,
     access_tokens,
     user_folders,
-    folder_contents,
+    folder_contents,        // Now includes zipwebsites tracking
     user_aliases,
     user_folder_cid_history,
     website_cid_mapping,
     cid_redirects,
-    user_credentials,  // ADD THIS
+    user_credentials,
     timestamp: new Date().toISOString()
   };
   fs.writeFileSync(DATA_FILE, JSON.stringify(data, null, 2));
@@ -1393,7 +1660,7 @@ app.post('/command', requireAuth, async (req, res) => {
           return res.status(500).json({ error: 'Failed to update website: ' + err.message });
         }
       }
-      
+
       case 'edit-website-data': {
         const { dns, dataContent } = args;
         
@@ -2540,42 +2807,221 @@ app.post('/upload-files', requireAuth, upload.array('files'), async (req, res) =
   });
 
 // ========== ZIP Upload Endpoint ==========
+// app.post('/upload-zip', requireAuth, upload.single('zipfile'), async (req, res) => {
+//     const { dns, metadata } = req.body;
+//     const userId = req.userId;
+    
+//     try {
+//       if (!req.file) {
+//         return res.status(400).json({ error: 'No ZIP file uploaded' });
+//       }
+  
+//       if (dns_map[dns] && dns_map[dns].owner !== userId) {
+//         return res.status(403).json({ error: 'DNS name already taken by another user' });
+//       }
+  
+//       console.log("📦 Processing ZIP upload for DNS:", dns);
+//       console.log("📁 Original file:", req.file.originalname, "Size:", req.file.size);
+  
+//       // Read the uploaded ZIP file
+//       const zipData = fs.readFileSync(req.file.path);
+      
+//       // Create temporary directory
+//       const tempDir = path.join(__dirname, 'temp', `webapp-zip-${Date.now()}`);
+//       fs.mkdirSync(tempDir, { recursive: true });
+  
+//       try {
+//         // Write ZIP data to temp file
+//         const zipPath = path.join(tempDir, 'upload.zip');
+//         fs.writeFileSync(zipPath, zipData);
+//         console.log("💾 ZIP written to:", zipPath);
+  
+//         // Extract ZIP
+//         const zip = new AdmZip(zipPath);
+//         const extractPath = path.join(tempDir, 'extracted');
+//         zip.extractAllTo(extractPath, true);
+//         console.log("📂 ZIP extracted to:", extractPath);
+  
+//         // Check what was extracted
+//         const extractedContents = fs.readdirSync(extractPath);
+//         let contentDir = extractPath;
+
+//         const validDirs = extractedContents.filter(item => 
+//             !item.startsWith('.') && 
+//             !item.startsWith('__MACOSX') &&
+//             fs.statSync(path.join(extractPath, item)).isDirectory()
+//           );
+          
+//           const validFiles = extractedContents.filter(item => 
+//             !item.startsWith('.') && 
+//             !item.startsWith('__MACOSX') &&
+//             fs.statSync(path.join(extractPath, item)).isFile()
+//           );
+          
+//           console.log("📁 Valid directories found:", validDirs);
+//           console.log("📄 Valid files found:", validFiles);
+          
+//         console.log("📁 Valid directories found:", validDirs);
+//         console.log("📄 Valid files found:", validFiles);
+
+//         if (validFiles.length === 0 && validDirs.length === 1) {
+//             contentDir = path.join(extractPath, validDirs[0]);
+//             console.log("🎯 Using nested directory as content root:", contentDir);
+//           } else {
+//             console.log("🎯 Using extract path as content root:", contentDir);
+//         }
+        
+  
+//         // List all items in content directory
+//         const contentItems = fs.readdirSync(contentDir);
+//         console.log("📄 Items in content directory:", contentItems);
+  
+//         // Track all files for ownership
+//         const allFiles = [];
+//         function collectFiles(dir, relativePath = '') {
+//           console.log(`🔍 Scanning directory: ${dir} (relative: ${relativePath})`);
+//           const items = fs.readdirSync(dir);
+          
+//           for (const item of items) {
+//             if (item.startsWith('.') || item.startsWith('__MACOSX')) {
+//               console.log(`⏭️ Skipping system file/folder: ${item}`);
+//               continue;
+//             }
+            
+//             const fullPath = path.join(dir, item);
+//             const relPath = path.join(relativePath, item).replace(/\\/g, '/');
+//             const stats = fs.statSync(fullPath);
+            
+//             if (stats.isDirectory()) {
+//               console.log(`📁 Found directory: ${item} -> ${relPath}`);
+//               collectFiles(fullPath, relPath);
+//             } else {
+//               console.log(`📄 Found file: ${item} -> ${relPath} (${stats.size} bytes)`);
+//               allFiles.push(relPath);
+//               file_ownership[relPath] = userId;
+//             }
+//           }
+//         }
+        
+//         collectFiles(contentDir);
+//         console.log("✅ Total files collected:", allFiles.length);
+//         console.log("📋 File list:", allFiles);
+  
+//         // Add metadata file
+//         const metaPath = path.join(contentDir, 'meta.json');
+//         fs.writeFileSync(metaPath, JSON.stringify({
+//           ...(metadata ? JSON.parse(metadata) : {}),
+//           owner: userId,
+//           created: new Date().toISOString(),
+//           type: 'webapp-zip',
+//           fileCount: allFiles.length,
+//           structure: allFiles
+//         }, null, 2));
+  
+//         console.log("🚀 Uploading to IPFS from:", contentDir);
+        
+//         // Upload to IPFS
+//         const result = await execPromise(`ipfs add -r .`, contentDir);
+//         console.log("📡 IPFS add result:", result);
+        
+//         const lines = result.trim().split('\n');
+//         const cid = lines[lines.length - 1].split(' ')[1];
+//         console.log("🎉 Final CID:", cid);
+  
+//         // Update mappings
+//         const oldCID = dns_map[dns]?.cid;
+//         dns_map[dns] = {
+//           cid,
+//           owner: userId,
+//           created: dns_map[dns]?.created || new Date().toISOString(),
+//           updated: new Date().toISOString(),
+//           type: 'webapp-zip',
+//           fileCount: allFiles.length
+//         };
+  
+//         if (!cid_history[dns]) cid_history[dns] = [];
+//         cid_history[dns].push({
+//           cid,
+//           timestamp: new Date().toISOString(),
+//           version: cid_history[dns].length + 1,
+//           action: 'ZIP upload',
+//           fileCount: allFiles.length
+//         });
+  
+//         if (!user_directories[userId].dns.includes(dns)) {
+//           user_directories[userId].dns.push(dns);
+//         }
+  
+//         // Cleanup
+//         fs.rmSync(tempDir, { recursive: true, force: true });
+//         fs.unlinkSync(req.file.path);
+//         saveData();
+  
+//         return res.json({ 
+//           dns, 
+//           cid, 
+//           oldCID, 
+//           version: cid_history[dns].length,
+//           fileCount: allFiles.length,
+//           structure: allFiles
+//         });
+  
+//       } catch (err) {
+//         console.error("❌ ZIP processing error:", err);
+//         if (fs.existsSync(tempDir)) {
+//           fs.rmSync(tempDir, { recursive: true, force: true });
+//         }
+//         throw err;
+//       }
+      
+//     } catch (err) {
+//       console.error('❌ ZIP upload error:', err);
+//       if (req.file && fs.existsSync(req.file.path)) {
+//         fs.unlinkSync(req.file.path);
+//       }
+//       res.status(500).json({ error: err.message });
+//     }
+//   });
+
+
 app.post('/upload-zip', requireAuth, upload.single('zipfile'), async (req, res) => {
     const { dns, metadata } = req.body;
     const userId = req.userId;
+    const userAlias = req.userAlias;
     
     try {
       if (!req.file) {
         return res.status(400).json({ error: 'No ZIP file uploaded' });
       }
+      
+      if (!userAlias) {
+        return res.status(400).json({ error: 'User alias not found. Please re-login.' });
+      }
   
-      if (dns_map[dns] && dns_map[dns].owner !== userId) {
+      // Check for existing website conflicts
+      const existingSite = dns_map[dns];
+      if (existingSite && existingSite.owner !== userId) {
         return res.status(403).json({ error: 'DNS name already taken by another user' });
       }
   
-      console.log("📦 Processing ZIP upload for DNS:", dns);
+      console.log("📦 Processing ZIP upload for user folder:", userAlias);
       console.log("📁 Original file:", req.file.originalname, "Size:", req.file.size);
   
-      // Read the uploaded ZIP file
+      // Read and extract ZIP file
       const zipData = fs.readFileSync(req.file.path);
-      
-      // Create temporary directory
-      const tempDir = path.join(__dirname, 'temp', `webapp-zip-${Date.now()}`);
+      const tempDir = path.join(__dirname, 'temp', `zip-extract-${Date.now()}`);
       fs.mkdirSync(tempDir, { recursive: true });
   
       try {
-        // Write ZIP data to temp file
+        // Write and extract ZIP
         const zipPath = path.join(tempDir, 'upload.zip');
         fs.writeFileSync(zipPath, zipData);
-        console.log("💾 ZIP written to:", zipPath);
-  
-        // Extract ZIP
+        
         const zip = new AdmZip(zipPath);
         const extractPath = path.join(tempDir, 'extracted');
         zip.extractAllTo(extractPath, true);
-        console.log("📂 ZIP extracted to:", extractPath);
-  
-        // Check what was extracted
+        
+        // Find content directory
         const extractedContents = fs.readdirSync(extractPath);
         let contentDir = extractPath;
 
@@ -2583,122 +3029,153 @@ app.post('/upload-zip', requireAuth, upload.single('zipfile'), async (req, res) 
             !item.startsWith('.') && 
             !item.startsWith('__MACOSX') &&
             fs.statSync(path.join(extractPath, item)).isDirectory()
-          );
+        );
           
-          const validFiles = extractedContents.filter(item => 
-            !item.startsWith('.') && 
-            !item.startsWith('__MACOSX') &&
-            fs.statSync(path.join(extractPath, item)).isFile()
-          );
-          
-          console.log("📁 Valid directories found:", validDirs);
-          console.log("📄 Valid files found:", validFiles);
-          
-        console.log("📁 Valid directories found:", validDirs);
-        console.log("📄 Valid files found:", validFiles);
+        const validFiles = extractedContents.filter(item => 
+          !item.startsWith('.') && 
+          !item.startsWith('__MACOSX') &&
+          fs.statSync(path.join(extractPath, item)).isFile()
+        );
 
         if (validFiles.length === 0 && validDirs.length === 1) {
             contentDir = path.join(extractPath, validDirs[0]);
-            console.log("🎯 Using nested directory as content root:", contentDir);
-          } else {
-            console.log("🎯 Using extract path as content root:", contentDir);
         }
         
-  
-        // List all items in content directory
-        const contentItems = fs.readdirSync(contentDir);
-        console.log("📄 Items in content directory:", contentItems);
-  
-        // Track all files for ownership
+        // Collect all files
         const allFiles = [];
         function collectFiles(dir, relativePath = '') {
-          console.log(`🔍 Scanning directory: ${dir} (relative: ${relativePath})`);
           const items = fs.readdirSync(dir);
-          
           for (const item of items) {
-            if (item.startsWith('.') || item.startsWith('__MACOSX')) {
-              console.log(`⏭️ Skipping system file/folder: ${item}`);
-              continue;
-            }
+            if (item.startsWith('.') || item.startsWith('__MACOSX')) continue;
             
             const fullPath = path.join(dir, item);
             const relPath = path.join(relativePath, item).replace(/\\/g, '/');
             const stats = fs.statSync(fullPath);
             
             if (stats.isDirectory()) {
-              console.log(`📁 Found directory: ${item} -> ${relPath}`);
               collectFiles(fullPath, relPath);
             } else {
-              console.log(`📄 Found file: ${item} -> ${relPath} (${stats.size} bytes)`);
               allFiles.push(relPath);
-              file_ownership[relPath] = userId;
             }
           }
         }
         
         collectFiles(contentDir);
         console.log("✅ Total files collected:", allFiles.length);
-        console.log("📋 File list:", allFiles);
-  
-        // Add metadata file
-        const metaPath = path.join(contentDir, 'meta.json');
-        fs.writeFileSync(metaPath, JSON.stringify({
-          ...(metadata ? JSON.parse(metadata) : {}),
-          owner: userId,
-          created: new Date().toISOString(),
-          type: 'webapp-zip',
+        
+        // Add data.json for edit compatibility
+        const dataDir = path.join(contentDir, 'data');
+        if (!fs.existsSync(dataDir)) {
+          fs.mkdirSync(dataDir, { recursive: true });
+        }
+        
+        const dataJsonPath = path.join(dataDir, 'data.json');
+        if (!fs.existsSync(dataJsonPath)) {
+          const websiteData = {
+            template: 'zip-upload',
+            userData: {
+              siteName: dns.split('.')[0],
+              uploadedFile: req.file.originalname,
+              fileCount: allFiles.length
+            },
+            owner: userAlias,
+            created: existingSite?.created || new Date().toISOString(),
+            updated: new Date().toISOString(),
+            version: existingSite ? ((cid_history[dns]?.length || 0) + 1) : 1,
+            dns: dns,
+            type: 'zip-website',
+            folder_path: `zipwebsites/${dns}`,
+            upload_info: {
+              original_filename: req.file.originalname,
+              file_size: req.file.size,
+              extracted_files: allFiles.length
+            }
+          };
+          fs.writeFileSync(dataJsonPath, JSON.stringify(websiteData, null, 2));
+          allFiles.push('data/data.json');
+        }
+        
+        // Calculate content size
+        let contentSize = 0;
+        function calculateSize(dir) {
+          const items = fs.readdirSync(dir);
+          for (const item of items) {
+            const itemPath = path.join(dir, item);
+            const stats = fs.statSync(itemPath);
+            if (stats.isDirectory()) {
+              calculateSize(itemPath);
+            } else {
+              contentSize += stats.size;
+            }
+          }
+        }
+        calculateSize(contentDir);
+        
+        // Add to user folder using updateUserFolder
+        const zipContent = {
+          dns: dns,
+          extractedPath: contentDir,
+          filesList: allFiles,
           fileCount: allFiles.length,
-          structure: allFiles
-        }, null, 2));
-  
-        console.log("🚀 Uploading to IPFS from:", contentDir);
-        
-        // Upload to IPFS
-        const result = await execPromise(`ipfs add -r .`, contentDir);
-        console.log("📡 IPFS add result:", result);
-        
-        const lines = result.trim().split('\n');
-        const cid = lines[lines.length - 1].split(' ')[1];
-        console.log("🎉 Final CID:", cid);
-  
-        // Update mappings
-        const oldCID = dns_map[dns]?.cid;
-        dns_map[dns] = {
-          cid,
-          owner: userId,
-          created: dns_map[dns]?.created || new Date().toISOString(),
-          updated: new Date().toISOString(),
-          type: 'webapp-zip',
-          fileCount: allFiles.length
+          originalFilename: req.file.originalname
         };
-  
+        
+        const result = await updateUserFolder(userAlias, zipContent, 'zipwebsite', contentSize);
+        
+        // Update DNS mapping for ZIP website in user folder
+        dns_map[dns] = {
+          type: 'user-folder-zipwebsite',
+          user_folder: userAlias,
+          folder_path: `zipwebsites/${dns}`,
+          owner: userId,
+          created: existingSite?.created || new Date().toISOString(),
+          updated: new Date().toISOString(),
+          original_filename: req.file.originalname,
+          file_count: allFiles.length
+        };
+        
+        // Add to cid history
         if (!cid_history[dns]) cid_history[dns] = [];
         cid_history[dns].push({
-          cid,
+          folder_cid: result.newCID,
+          previous_folder_cid: result.oldCID,
           timestamp: new Date().toISOString(),
           version: cid_history[dns].length + 1,
-          action: 'ZIP upload',
-          fileCount: allFiles.length
+          action: existingSite ? 'ZIP update in user folder' : 'ZIP upload to user folder',
+          path: `zipwebsites/${dns}`,
+          file_count: allFiles.length
         });
-  
+        
+        // Add to user directory
         if (!user_directories[userId].dns.includes(dns)) {
           user_directories[userId].dns.push(dns);
         }
-  
+        
         // Cleanup
         fs.rmSync(tempDir, { recursive: true, force: true });
         fs.unlinkSync(req.file.path);
         saveData();
-  
+        
         return res.json({ 
+          success: true,
           dns, 
-          cid, 
-          oldCID, 
+          folder_cid: result.newCID,
+          old_folder_cid: result.oldCID,
           version: cid_history[dns].length,
           fileCount: allFiles.length,
-          structure: allFiles
+          structure: allFiles,
+          is_update: !!existingSite,
+          website_url: `https://uservault.trustgrid.com:8080/ipfs/${result.newCID}/zipwebsites/${dns}`,
+          folder_url: `https://uservault.trustgrid.com:8080/ipfs/${result.newCID}`,
+          platform_url: `https://synqstorage.trustgrid.com:3000/site/${dns}`,
+          type: 'user-folder-zipwebsite',
+          quota_used: result.quotaUsed,
+          quota_available: user_folders[userAlias].quota_limit - result.quotaUsed,
+          message: existingSite ? 
+            `ZIP website updated in your folder (v${cid_history[dns].length})` : 
+            'ZIP website added to your folder successfully'
         });
-  
+        
       } catch (err) {
         console.error("❌ ZIP processing error:", err);
         if (fs.existsSync(tempDir)) {
@@ -2714,8 +3191,55 @@ app.post('/upload-zip', requireAuth, upload.single('zipfile'), async (req, res) 
       }
       res.status(500).json({ error: err.message });
     }
-  });
+});
 
+
+
+// app.get('/site/:dns', async (req, res) => {
+//   const dns = req.params.dns;
+//   const site = dns_map[dns];
+  
+//   if (!site) {
+//     return res.status(404).send(`
+//       <!DOCTYPE html>
+//       <html>
+//       <head><title>Site Not Found</title></head>
+//       <body>
+//         <h1>🌐 Site Not Found</h1>
+//         <p>The site <strong>${dns}</strong> does not exist on this platform.</p>
+//         <a href="https://synqstorage.trustgrid.com:3000/">← Back to Platform</a>
+//       </body>
+//       </html>
+//     `);
+//   }
+  
+//   if (site.type === 'user-folder-website' && site.user_folder) {
+//     // Get current folder CID using our tracking system
+//     let currentFolderCID = user_folders[site.user_folder]?.cid;
+    
+//     // Double-check with website CID mapping
+//     if (website_cid_mapping && website_cid_mapping[dns]) {
+//       currentFolderCID = website_cid_mapping[dns].current_folder_cid;
+//     }
+    
+//     if (!currentFolderCID) {
+//       return res.status(404).send('User folder not found');
+//     }
+    
+//     // Build the correct URL
+//     const websiteURL = `https://uservault.trustgrid.com:8080/ipfs/${currentFolderCID}/${site.folder_path}`;
+//     console.log(`🔗 Redirecting ${dns} to current CID: ${currentFolderCID}`);
+//     return res.redirect(websiteURL);
+//   } else {
+//     // Traditional direct IPFS website - check for redirects
+//     let targetCID = site.cid;
+//     if (cid_redirects && cid_redirects[site.cid]) {
+//       targetCID = cid_redirects[site.cid];
+//       console.log(`🔄 Direct site CID redirect: ${site.cid} → ${targetCID}`);
+//     }
+//     return res.redirect(`https://uservault.trustgrid.com:8080/ipfs/${targetCID}`);
+//   }
+// });
 
 app.get('/site/:dns', async (req, res) => {
   const dns = req.params.dns;
@@ -2735,9 +3259,9 @@ app.get('/site/:dns', async (req, res) => {
     `);
   }
   
-  if (site.type === 'user-folder-website' && site.user_folder) {
-    // Get current folder CID using our tracking system
-    let currentFolderCID = user_folders[site.user_folder]?.cid;
+  if (site.type === 'user-folder-website' || site.type === 'user-folder-zipwebsite') {
+    // Get current folder CID
+    const currentFolderCID = user_folders[site.user_folder]?.cid;
     
     // Double-check with website CID mapping
     if (website_cid_mapping && website_cid_mapping[dns]) {
@@ -2748,20 +3272,20 @@ app.get('/site/:dns', async (req, res) => {
       return res.status(404).send('User folder not found');
     }
     
-    // Build the correct URL
-    const websiteURL = `https://uservault.trustgrid.com:8080/ipfs/${currentFolderCID}/${site.folder_path}`;
-    console.log(`🔗 Redirecting ${dns} to current CID: ${currentFolderCID}`);
+    // Build the correct URL based on type
+    const folderPath = site.type === 'user-folder-zipwebsite' ? 
+      `zipwebsites/${dns}` : 
+      `websites/${dns}`;
+      
+    const websiteURL = `https://uservault.trustgrid.com:8080/ipfs/${currentFolderCID}/${folderPath}`;
+    console.log(`🔗 Redirecting ${dns} (${site.type}) to: ${websiteURL}`);
     return res.redirect(websiteURL);
   } else {
-    // Traditional direct IPFS website - check for redirects
-    let targetCID = site.cid;
-    if (cid_redirects && cid_redirects[site.cid]) {
-      targetCID = cid_redirects[site.cid];
-      console.log(`🔄 Direct site CID redirect: ${site.cid} → ${targetCID}`);
-    }
-    return res.redirect(`https://uservault.trustgrid.com:8080/ipfs/${targetCID}`);
+    // Traditional direct IPFS website
+    return res.redirect(`https://uservault.trustgrid.com:8080/ipfs/${site.cid}`);
   }
 });
+
 
 app.get('/resolve-dns/:dns', async (req, res) => {
   const dns = req.params.dns;
