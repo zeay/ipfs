@@ -1304,6 +1304,275 @@ app.post('/command', requireAuth, async (req, res) => {
         });
       }
 
+      case 'debug-folder-structure': {
+  const { alias, cid } = args;
+  
+  if (!alias && !cid) {
+    return res.status(400).json({ error: 'Provide either alias or cid' });
+  }
+  
+  try {
+    let targetCID;
+    let targetAlias;
+    
+    if (alias) {
+      targetAlias = alias;
+      targetCID = user_folders[alias]?.cid;
+      if (!targetCID) {
+        return res.status(404).json({ error: `No folder found for alias: ${alias}` });
+      }
+    } else {
+      targetCID = cid;
+      targetAlias = 'unknown';
+    }
+    
+    console.log(`🔍 Debugging folder structure for ${targetAlias} (CID: ${targetCID})`);
+    
+    // Get IPFS tree structure
+    const tree = await getIPFSTree(targetCID, 0, 3); // Max 3 levels deep
+    
+    // Also try direct IPFS ls command
+    let lsOutput = '';
+    try {
+      const lsResult = await execAsync(`ipfs ls -v ${targetCID}`);
+      lsOutput = lsResult.stdout;
+    } catch (err) {
+      lsOutput = `Error: ${err.message}`;
+    }
+    
+    // Get our internal tracking data
+    const folderData = user_folders[targetAlias] || null;
+    const contentsData = folder_contents[targetAlias] || null;
+    const historyData = user_folder_cid_history ? user_folder_cid_history[targetAlias] : null;
+    
+    return res.json({
+      alias: targetAlias,
+      cid: targetCID,
+      ipfs_tree: tree,
+      ipfs_ls_output: lsOutput,
+      internal_folder_data: folderData,
+      internal_contents: contentsData,
+      cid_history: historyData,
+      gateway_url: `https://uservault.trustgrid.com:8080/ipfs/${targetCID}`,
+      debug_urls: {
+        browse_folder: `https://uservault.trustgrid.com:8080/ipfs/${targetCID}`,
+        websites_folder: `https://uservault.trustgrid.com:8080/ipfs/${targetCID}/websites`,
+        files_folder: `https://uservault.trustgrid.com:8080/ipfs/${targetCID}/files`
+      }
+    });
+    
+  } catch (err) {
+    return res.status(500).json({ 
+      error: 'Failed to debug folder structure',
+      details: err.message 
+    });
+  }
+}
+
+case 'debug-website-path': {
+  const { dns } = args;
+  
+  if (!dns) {
+    return res.status(400).json({ error: 'Provide dns name' });
+  }
+  
+  try {
+    // Get DNS mapping
+    const site = dns_map[dns];
+    if (!site) {
+      return res.status(404).json({ error: `DNS ${dns} not found in mapping` });
+    }
+    
+    console.log(`🔍 Debugging website path for ${dns}`);
+    
+    let debugInfo = {
+      dns: dns,
+      dns_mapping: site,
+      expected_path: null,
+      current_folder_cid: null,
+      test_urls: []
+    };
+    
+    if (site.type === 'user-folder-website' && site.user_folder) {
+      const alias = site.user_folder;
+      const currentCID = user_folders[alias]?.cid;
+      const expectedPath = site.folder_path || `websites/${dns}`;
+      
+      debugInfo.expected_path = expectedPath;
+      debugInfo.current_folder_cid = currentCID;
+      debugInfo.alias = alias;
+      
+      // Test various URL patterns
+      const testUrls = [
+        `https://uservault.trustgrid.com:8080/ipfs/${currentCID}`,
+        `https://uservault.trustgrid.com:8080/ipfs/${currentCID}/websites`,
+        `https://uservault.trustgrid.com:8080/ipfs/${currentCID}/websites/${dns}`,
+        `https://uservault.trustgrid.com:8080/ipfs/${currentCID}/${expectedPath}`,
+        `https://uservault.trustgrid.com:8080/ipfs/${currentCID}/${expectedPath}/index.html`
+      ];
+      
+      debugInfo.test_urls = testUrls;
+      
+      // Check if website exists in folder contents
+      const contents = folder_contents[alias];
+      debugInfo.folder_contents = contents;
+      debugInfo.website_in_contents = contents?.websites?.[dns] || null;
+      
+      // Try to get folder structure at website path
+      try {
+        const websiteTree = await getIPFSTree(currentCID);
+        debugInfo.folder_tree = websiteTree;
+        
+        // Check if websites folder exists
+        if (websiteTree.websites) {
+          debugInfo.websites_folder_exists = true;
+          debugInfo.websites_in_folder = Object.keys(websiteTree.websites);
+          
+          // Check if specific website exists
+          if (websiteTree.websites[dns]) {
+            debugInfo.website_folder_exists = true;
+            debugInfo.website_contents = websiteTree.websites[dns];
+          } else {
+            debugInfo.website_folder_exists = false;
+          }
+        } else {
+          debugInfo.websites_folder_exists = false;
+        }
+        
+      } catch (err) {
+        debugInfo.tree_error = err.message;
+      }
+      
+    } else {
+      // Direct IPFS website
+      debugInfo.type = 'direct_ipfs';
+      debugInfo.direct_cid = site.cid;
+      debugInfo.test_urls = [
+        `https://uservault.trustgrid.com:8080/ipfs/${site.cid}`,
+        `https://uservault.trustgrid.com:8080/ipfs/${site.cid}/index.html`
+      ];
+    }
+    
+    return res.json(debugInfo);
+    
+  } catch (err) {
+    return res.status(500).json({ 
+      error: 'Failed to debug website path',
+      details: err.message 
+    });
+  }
+}
+
+case 'debug-all-user-data': {
+  const { alias } = args;
+  
+  if (alias && alias !== req.userAlias) {
+    return res.status(403).json({ error: 'Can only debug your own data' });
+  }
+  
+  const targetAlias = alias || req.userAlias;
+  
+  return res.json({
+    alias: targetAlias,
+    user_id: req.userId,
+    user_folders_entry: user_folders[targetAlias] || null,
+    folder_contents_entry: folder_contents[targetAlias] || null,
+    user_aliases_entry: user_aliases[targetAlias] || null,
+    user_directories_entry: user_directories[req.userId] || null,
+    cid_history: user_folder_cid_history ? user_folder_cid_history[targetAlias] : null,
+    website_mappings: website_cid_mapping ? 
+      Object.fromEntries(
+        Object.entries(website_cid_mapping).filter(([dns, info]) => dns.endsWith(`.${targetAlias}`))
+      ) : null,
+    dns_mappings: Object.fromEntries(
+      Object.entries(dns_map).filter(([dns, site]) => 
+        site.user_folder === targetAlias || site.owner === req.userId
+      )
+    ),
+    available_redirects: cid_redirects ? 
+      Object.fromEntries(
+        Object.entries(cid_redirects).filter(([oldCid, newCid]) => 
+          user_folders[targetAlias]?.cid === newCid
+        )
+      ) : null
+  });
+}
+
+case 'test-ipfs-access': {
+  const { cid, path = '' } = args;
+  
+  if (!cid) {
+    return res.status(400).json({ error: 'Provide CID to test' });
+  }
+  
+  try {
+    console.log(`🧪 Testing IPFS access: ${cid}/${path}`);
+    
+    // Test local IPFS access
+    const localURL = `http://localhost:8080/ipfs/${cid}/${path}`;
+    const productionURL = `https://uservault.trustgrid.com:8080/ipfs/${cid}/${path}`;
+    
+    let localResult = null;
+    let productionResult = null;
+    
+    // Test local access
+    try {
+      const localResponse = await fetch(localURL, { 
+        method: 'HEAD',
+        timeout: 5000 
+      });
+      localResult = {
+        status: localResponse.status,
+        statusText: localResponse.statusText,
+        accessible: localResponse.ok
+      };
+    } catch (err) {
+      localResult = {
+        error: err.message,
+        accessible: false
+      };
+    }
+    
+    // Test production access
+    try {
+      const prodResponse = await fetch(productionURL, { 
+        method: 'HEAD',
+        timeout: 5000 
+      });
+      productionResult = {
+        status: prodResponse.status,
+        statusText: prodResponse.statusText,
+        accessible: prodResponse.ok
+      };
+    } catch (err) {
+      productionResult = {
+        error: err.message,
+        accessible: false
+      };
+    }
+    
+    return res.json({
+      cid,
+      path,
+      local_url: localURL,
+      production_url: productionURL,
+      local_result: localResult,
+      production_result: productionResult,
+      recommendations: {
+        use_local_if_accessible: localResult.accessible,
+        use_production_if_accessible: productionResult.accessible,
+        try_without_path: path ? `Test with empty path: ${cid}` : null
+      }
+    });
+    
+  } catch (err) {
+    return res.status(500).json({ 
+      error: 'Failed to test IPFS access',
+      details: err.message 
+    });
+  }
+}
+
       default:
         return res.status(400).json({ error: 'Unknown command' });
     }
