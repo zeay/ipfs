@@ -52,6 +52,9 @@ let user_directories = {};  // userId => { dns: [], files: { filename: cid } }
 let cid_history = {};       // dns => [{ cid, timestamp, version }]
 let file_ownership = {};    // filename => userId
 let access_tokens = {};     // token => { userId, permissions, expires }
+let user_folder_cid_history = {};  // alias => [{ cid, timestamp, websites: [] }]
+let website_cid_mapping = {};      // dns => { current_folder_cid, path, creation_folder_cid }
+let cid_redirects = {};           // old_cid => current_cid (for IPFS gateway redirects)
 
 
 // async function createUserFolder(username) {
@@ -269,6 +272,12 @@ async function updateUserFolder(username, newContent, contentType, contentSize) 
     await execPromise(`ipfs get ${currentCID} -o ${tempDir}`);
     const folderDir = path.join(tempDir, currentCID);
     
+    // Track what websites exist before update
+    const websitesBefore = [];
+    if (folder_contents[username] && folder_contents[username].websites) {
+      websitesBefore.push(...Object.keys(folder_contents[username].websites));
+    }
+    
     // Add new content based on type
     if (contentType === 'website') {
       const websiteDir = path.join(folderDir, 'websites', newContent.dns);
@@ -291,7 +300,7 @@ async function updateUserFolder(username, newContent, contentType, contentSize) 
         }
       }
       
-      // IMPORTANT: Ensure data.json exists in user folder websites too
+      // Create data.json for the website
       const dataJsonPath = path.join(websiteDir, 'data', 'data.json');
       if (!fs.existsSync(dataJsonPath)) {
         const websiteData = {
@@ -341,11 +350,55 @@ async function updateUserFolder(username, newContent, contentType, contentSize) 
     const lines = result.trim().split('\n');
     const newCID = lines[lines.length - 1].split(' ')[1];
     
-    // Update user folder data
+    // CRITICAL: Update CID tracking system
     const oldCID = user_folders[username].cid;
+    
+    // 1. Update user folder data
     user_folders[username].cid = newCID;
     user_folders[username].quota_used += contentSize;
     user_folders[username].updated = new Date().toISOString();
+    
+    // 2. Track CID history for this user folder
+    if (!user_folder_cid_history[username]) {
+      user_folder_cid_history[username] = [];
+    }
+    
+    // Get current websites list
+    const currentWebsites = Object.keys(folder_contents[username].websites || {});
+    
+    user_folder_cid_history[username].push({
+      cid: newCID,
+      previous_cid: oldCID,
+      timestamp: new Date().toISOString(),
+      action: contentType === 'website' ? `Added website: ${newContent.dns}` : `Added file: ${newContent.filename}`,
+      websites: [...currentWebsites], // All websites in this CID
+      version: user_folder_cid_history[username].length + 1
+    });
+    
+    // 3. Create CID redirect mapping (old CID -> new CID)
+    if (oldCID !== newCID) {
+      cid_redirects[oldCID] = newCID;
+      
+      // Also create redirects for all previous CIDs of this user
+      user_folder_cid_history[username].forEach(entry => {
+        if (entry.cid !== newCID) {
+          cid_redirects[entry.cid] = newCID;
+        }
+      });
+    }
+    
+    // 4. Update website CID mapping for all websites in this folder
+    currentWebsites.forEach(websiteDns => {
+      if (!website_cid_mapping[websiteDns]) {
+        website_cid_mapping[websiteDns] = {
+          creation_folder_cid: newCID,
+          path: `websites/${websiteDns}`
+        };
+      }
+      // Always update current CID
+      website_cid_mapping[websiteDns].current_folder_cid = newCID;
+      website_cid_mapping[websiteDns].last_updated = new Date().toISOString();
+    });
     
     // Update counts
     if (contentType === 'website') {
@@ -355,6 +408,9 @@ async function updateUserFolder(username, newContent, contentType, contentSize) 
     
     // Cleanup
     fs.rmSync(tempDir, { recursive: true, force: true });
+    
+    console.log(`📦 Updated ${username} folder: ${oldCID} → ${newCID}`);
+    console.log(`🔗 Created redirects for ${Object.keys(cid_redirects).length} old CIDs`);
     
     return { oldCID, newCID, quotaUsed: user_folders[username].quota_used };
     
@@ -382,6 +438,21 @@ const DATA_FILE = path.join(__dirname, 'platform-data.json');
 //   fs.writeFileSync(DATA_FILE, JSON.stringify(data, null, 2));
 // }
 
+// function saveData() {
+//   const data = {
+//     dns_map,
+//     user_directories,
+//     cid_history,
+//     file_ownership,
+//     access_tokens,
+//     user_folders,
+//     folder_contents,
+//     user_aliases,  // ADD THIS
+//     timestamp: new Date().toISOString()
+//   };
+//   fs.writeFileSync(DATA_FILE, JSON.stringify(data, null, 2));
+// }
+
 function saveData() {
   const data = {
     dns_map,
@@ -391,7 +462,10 @@ function saveData() {
     access_tokens,
     user_folders,
     folder_contents,
-    user_aliases,  // ADD THIS
+    user_aliases,
+    user_folder_cid_history,    // ADD
+    website_cid_mapping,        // ADD
+    cid_redirects,             // ADD
     timestamp: new Date().toISOString()
   };
   fs.writeFileSync(DATA_FILE, JSON.stringify(data, null, 2));
@@ -411,6 +485,25 @@ function getUserByAlias(alias) {
   };
 }
 
+// function loadData() {
+//   try {
+//     if (fs.existsSync(DATA_FILE)) {
+//       const data = JSON.parse(fs.readFileSync(DATA_FILE));
+//       dns_map = data.dns_map || {};
+//       user_directories = data.user_directories || {};
+//       cid_history = data.cid_history || {};
+//       file_ownership = data.file_ownership || {};
+//       access_tokens = data.access_tokens || {};
+//       user_folders = data.user_folders || {};
+//       folder_contents = data.folder_contents || {};
+//       user_aliases = data.user_aliases || {};  // ADD THIS
+//       console.log('📊 Data loaded from storage');
+//     }
+//   } catch (err) {
+//     console.error('❌ Failed to load data:', err.message);
+//   }
+// }
+
 function loadData() {
   try {
     if (fs.existsSync(DATA_FILE)) {
@@ -422,7 +515,10 @@ function loadData() {
       access_tokens = data.access_tokens || {};
       user_folders = data.user_folders || {};
       folder_contents = data.folder_contents || {};
-      user_aliases = data.user_aliases || {};  // ADD THIS
+      user_aliases = data.user_aliases || {};
+      user_folder_cid_history = data.user_folder_cid_history || {};    // ADD
+      website_cid_mapping = data.website_cid_mapping || {};            // ADD
+      cid_redirects = data.cid_redirects || {};                       // ADD
       console.log('📊 Data loaded from storage');
     }
   } catch (err) {
@@ -1052,26 +1148,25 @@ app.post('/command', requireAuth, async (req, res) => {
         try {
           const result = await updateUserFolder(username, content, type, contentSize);
           
-          // FIXED: Handle website DNS mapping correctly
+          // Handle website DNS mapping with proper tracking
           if (type === 'website' && content.dns) {
             const websitePath = `websites/${content.dns}`;
             
-            // DON'T point DNS to folder CID - use special user folder reference
+            // Store DNS mapping with user folder reference
             dns_map[content.dns] = {
               type: 'user-folder-website',
               user_folder: username,
               folder_path: websitePath,
               owner: req.userId,
               created: dns_map[content.dns]?.created || new Date().toISOString(),
-              updated: new Date().toISOString(),
-              // Store current folder CID for reference but don't use it for routing
-              current_folder_cid: result.newCID
+              updated: new Date().toISOString()
             };
             
-            // Add to cid history with folder reference
+            // Add to cid history with proper tracking
             if (!cid_history[content.dns]) cid_history[content.dns] = [];
             cid_history[content.dns].push({
               folder_cid: result.newCID,
+              previous_folder_cid: result.oldCID,
               timestamp: new Date().toISOString(),
               version: cid_history[content.dns].length + 1,
               action: 'Created/Updated in user folder',
@@ -1082,6 +1177,10 @@ app.post('/command', requireAuth, async (req, res) => {
             if (!user_directories[req.userId].dns.includes(content.dns)) {
               user_directories[req.userId].dns.push(content.dns);
             }
+            
+            console.log(`✅ Website ${content.dns} created in folder ${username}`);
+            console.log(`📂 Current folder CID: ${result.newCID}`);
+            console.log(`🔗 Website URL: https://uservault.trustgrid.com:8080/ipfs/${result.newCID}/${websitePath}`);
           }
           
           saveData();
@@ -1096,37 +1195,12 @@ app.post('/command', requireAuth, async (req, res) => {
             website_url: type === 'website' ? 
               `https://uservault.trustgrid.com:8080/ipfs/${result.newCID}/websites/${content.dns}` : null,
             folder_url: `https://uservault.trustgrid.com:8080/ipfs/${result.newCID}`,
+            cid_redirects_count: Object.keys(cid_redirects).length,
             message: `${type} uploaded to user folder successfully`
           });
           
         } catch (err) {
           return res.status(400).json({ error: err.message });
-        }
-      }
-
-      case 'debug-site-structure': {
-        const { dns } = args;
-        
-        if (!dns_map[dns]) {
-          return res.status(404).json({ error: 'Site not found' });
-        }
-        
-        try {
-          const site = dns_map[dns];
-          const tree = await getIPFSTree(site.cid);
-          
-          return res.json({
-            dns,
-            cid: site.cid,
-            structure: tree,
-            has_data_folder: !!tree.data,
-            has_data_json: !!(tree.data && tree.data['data.json']),
-            files: Object.keys(tree),
-            type: site.type,
-            owner: site.owner
-          });
-        } catch (err) {
-          return res.status(500).json({ error: 'Failed to analyze site structure: ' + err.message });
         }
       }
 
@@ -1197,6 +1271,37 @@ app.post('/command', requireAuth, async (req, res) => {
         } catch (err) {
           return res.status(500).json({ error: 'Failed to update website: ' + err.message });
         }
+      }
+
+      case 'debug-cid-tracking': {
+        const { username } = args;
+        
+        if (!username) {
+          // Show all CID tracking info
+          return res.json({
+            total_redirects: Object.keys(cid_redirects).length,
+            tracked_users: Object.keys(user_folder_cid_history).length,
+            tracked_websites: Object.keys(website_cid_mapping).length,
+            sample_redirects: Object.entries(cid_redirects).slice(0, 5),
+            all_users: Object.keys(user_folder_cid_history)
+          });
+        }
+        
+        // Show specific user's CID tracking
+        const folderHistory = user_folder_cid_history[username] || [];
+        const userWebsites = Object.entries(website_cid_mapping).filter(([dns, info]) => 
+          dns.endsWith(`.${username}`)
+        );
+        
+        return res.json({
+          username,
+          current_folder_cid: user_folders[username]?.cid,
+          folder_history: folderHistory,
+          websites: userWebsites,
+          redirects: Object.entries(cid_redirects).filter(([oldCid, newCid]) => 
+            folderHistory.some(h => h.cid === newCid)
+          )
+        });
       }
 
       default:
@@ -1559,64 +1664,6 @@ app.post('/resolve-ipfs', async (req, res) => {
   }
 });
 
-// app.get('/resolve-dns/:dns', async (req, res) => {
-//   const dns = req.params.dns;
-//   const site = dns_map[dns];
-  
-//   if (!site) {
-//     return res.status(404).json({ error: 'DNS not found' });
-//   }
-  
-//   try {
-//     const tree = await getIPFSTree(site.cid);
-//     return res.json({ 
-//       dns,
-//       ...site,
-//       tree,
-//       versions: cid_history[dns]?.length || 0
-//     });
-//   } catch (err) {
-//     console.error('❌ DNS resolution error:', err);
-//     return res.status(500).json({ error: 'Failed to fetch IPFS tree' });
-//   }
-// });
-
-// ========== Platform Stats ==========
-
-// app.get('/site/:dns', async (req, res) => {
-//   const dns = req.params.dns;
-//   const site = dns_map[dns];
-  
-//   if (!site) {
-//     return res.status(404).send(`
-//       <!DOCTYPE html>
-//       <html>
-//       <head>
-//         <title>Site Not Found</title>
-//         <style>
-//           body { font-family: Arial, sans-serif; text-align: center; padding: 100px; background: #f5f5f5; }
-//           .error { background: white; padding: 60px; border-radius: 10px; box-shadow: 0 10px 30px rgba(0,0,0,0.1); display: inline-block; }
-//           h1 { color: #e74c3c; margin-bottom: 20px; }
-//           p { color: #666; margin-bottom: 30px; }
-//           a { color: #3498db; text-decoration: none; }
-//         </style>
-//       </head>
-//       <body>
-//         <div class="error">
-//           <h1>🌐 Site Not Found</h1>
-//           <p>The site <strong>${dns}</strong> does not exist on this IPFS platform.</p>
-//           <a href="http://localhost:3000/">← Back to Platform</a>
-//         </div>
-//       </body>
-//       </html>
-//     `);
-//   }
-  
-//   // Redirect to current IPFS content
-//   res.redirect(`http://localhost:8080/ipfs/${site.cid}`);
-// });
-
-// Enhanced resolve-dns with better formatting
 
 app.get('/site/:dns', async (req, res) => {
   const dns = req.params.dns;
@@ -1636,16 +1683,22 @@ app.get('/site/:dns', async (req, res) => {
     `);
   }
   
-  // FIXED: Handle user folder websites correctly
   if (site.type === 'user-folder-website' && site.user_folder) {
-    // Get current folder CID
-    const currentFolderCID = user_folders[site.user_folder]?.cid;
+    // Get current folder CID using our tracking system
+    let currentFolderCID = user_folders[site.user_folder]?.cid;
+    
+    // Double-check with website CID mapping
+    if (website_cid_mapping[dns]) {
+      currentFolderCID = website_cid_mapping[dns].current_folder_cid;
+    }
+    
     if (!currentFolderCID) {
       return res.status(404).send('User folder not found');
     }
     
-    // Redirect to current folder CID + path
+    // Build the correct URL
     const websiteURL = `https://uservault.trustgrid.com:8080/ipfs/${currentFolderCID}/${site.folder_path}`;
+    console.log(`🔗 Redirecting ${dns} to current CID: ${currentFolderCID}`);
     return res.redirect(websiteURL);
   } else {
     // Traditional direct IPFS website
@@ -1913,6 +1966,23 @@ app.get('/stats', (req, res) => {
     ).length,
     averageStoragePerUser: totalUsers > 0 ? `${(totalStorage / totalUsers / 1024).toFixed(2)}KB` : '0KB'
   });
+});
+
+app.get('/ipfs/:cid/*?', (req, res) => {
+  const requestedCID = req.params.cid;
+  const path = req.params[0] || '';
+  
+  // Check if this is an old CID that needs redirecting
+  if (cid_redirects[requestedCID]) {
+    const currentCID = cid_redirects[requestedCID];
+    const redirectURL = `https://uservault.trustgrid.com:8080/ipfs/${currentCID}/${path}`;
+    console.log(`🔄 CID Redirect: ${requestedCID} → ${currentCID}`);
+    return res.redirect(301, redirectURL);
+  }
+  
+  // If no redirect needed, proxy to IPFS gateway
+  const ipfsURL = `https://uservault.trustgrid.com:8080/ipfs/${requestedCID}/${path}`;
+  return res.redirect(ipfsURL);
 });
 
 
