@@ -55,6 +55,7 @@ let access_tokens = {};     // token => { userId, permissions, expires }
 let user_folder_cid_history = {};  // alias => [{ cid, timestamp, websites: [] }]
 let website_cid_mapping = {};      // dns => { current_folder_cid, path, creation_folder_cid }
 let cid_redirects = {};           // old_cid => current_cid (for IPFS gateway redirects)
+let user_credentials = {};
 
 
 // async function createUserFolder(username) {
@@ -491,34 +492,6 @@ async function updateUserFolder(username, newContent, contentType, contentSize) 
 // Persistent storage
 const DATA_FILE = path.join(__dirname, 'platform-data.json');
 
-// ========== Data Persistence ==========
-// function saveData() {
-//   const data = {
-//     dns_map,
-//     user_directories,
-//     cid_history,
-//     file_ownership,
-//     access_tokens,
-//     timestamp: new Date().toISOString()
-//   };
-//   fs.writeFileSync(DATA_FILE, JSON.stringify(data, null, 2));
-// }
-
-// function saveData() {
-//   const data = {
-//     dns_map,
-//     user_directories,
-//     cid_history,
-//     file_ownership,
-//     access_tokens,
-//     user_folders,
-//     folder_contents,
-//     user_aliases,  // ADD THIS
-//     timestamp: new Date().toISOString()
-//   };
-//   fs.writeFileSync(DATA_FILE, JSON.stringify(data, null, 2));
-// }
-
 function saveData() {
   const data = {
     dns_map,
@@ -529,46 +502,15 @@ function saveData() {
     user_folders,
     folder_contents,
     user_aliases,
-    user_folder_cid_history,    // ADD
-    website_cid_mapping,        // ADD
-    cid_redirects,             // ADD
+    user_folder_cid_history,
+    website_cid_mapping,
+    cid_redirects,
+    user_credentials,  // ADD THIS
     timestamp: new Date().toISOString()
   };
   fs.writeFileSync(DATA_FILE, JSON.stringify(data, null, 2));
 }
 
-
-function getUserByAlias(alias) {
-  const userId = user_aliases[alias];
-  if (!userId) return null;
-  
-  return {
-    userId,
-    alias,
-    folder: user_folders[alias],
-    contents: folder_contents[alias],
-    directory: user_directories[userId]
-  };
-}
-
-// function loadData() {
-//   try {
-//     if (fs.existsSync(DATA_FILE)) {
-//       const data = JSON.parse(fs.readFileSync(DATA_FILE));
-//       dns_map = data.dns_map || {};
-//       user_directories = data.user_directories || {};
-//       cid_history = data.cid_history || {};
-//       file_ownership = data.file_ownership || {};
-//       access_tokens = data.access_tokens || {};
-//       user_folders = data.user_folders || {};
-//       folder_contents = data.folder_contents || {};
-//       user_aliases = data.user_aliases || {};  // ADD THIS
-//       console.log('📊 Data loaded from storage');
-//     }
-//   } catch (err) {
-//     console.error('❌ Failed to load data:', err.message);
-//   }
-// }
 
 function loadData() {
   try {
@@ -582,9 +524,10 @@ function loadData() {
       user_folders = data.user_folders || {};
       folder_contents = data.folder_contents || {};
       user_aliases = data.user_aliases || {};
-      user_folder_cid_history = data.user_folder_cid_history || {};    // ADD
-      website_cid_mapping = data.website_cid_mapping || {};            // ADD
-      cid_redirects = data.cid_redirects || {};                       // ADD
+      user_folder_cid_history = data.user_folder_cid_history || {};
+      website_cid_mapping = data.website_cid_mapping || {};
+      cid_redirects = data.cid_redirects || {};
+      user_credentials = data.user_credentials || {};  // ADD THIS
       console.log('📊 Data loaded from storage');
     }
   } catch (err) {
@@ -604,11 +547,6 @@ function validateUser(token) {
   };
 }
 
-
-
-
-
-// ========== Helper Functions ==========
 function generateUserId() {
   return crypto.randomBytes(16).toString('hex');
 }
@@ -717,14 +655,19 @@ function requireAuth(req, res, next) {
 
 
 app.post('/auth/register', async (req, res) => {
-  const { alias } = req.body;
+  const { alias, password } = req.body;  // ADD password
   
   // Validate alias
   if (!alias || alias.length < 3) {
     return res.status(400).json({ error: 'Alias must be at least 3 characters long' });
   }
   
-  // Check alias format (alphanumeric, hyphens, underscores only)
+  // Validate password
+  if (!password || password.length < 4) {
+    return res.status(400).json({ error: 'Password must be at least 4 characters long' });
+  }
+  
+  // Check alias format
   const aliasRegex = /^[a-zA-Z0-9_-]+$/;
   if (!aliasRegex.test(alias)) {
     return res.status(400).json({ 
@@ -744,13 +687,16 @@ app.post('/auth/register', async (req, res) => {
     const userId = generateUserId();
     const token = generateToken();
     
+    // Hash password (simple hash - in production use bcrypt)
+    const hashedPassword = crypto.createHash('sha256').update(password).digest('hex');
+    
     // Create user folder on IPFS
     const folderCID = await createUserFolder(alias);
     
-    // Store authentication data
+    // Store authentication data WITH password hash
     access_tokens[token] = {
       userId,
-      alias,  // Add alias to token data
+      alias,
       permissions: ['read', 'write', 'upload'],
       expires: Date.now() + (30 * 24 * 60 * 60 * 1000) // 30 days
     };
@@ -762,7 +708,16 @@ app.post('/auth/register', async (req, res) => {
       files: {} 
     };
     
-    // Initialize user folder mapping (alias -> userId)
+    // Store user credentials with password
+    if (!user_credentials) user_credentials = {};
+    user_credentials[alias] = {
+      userId,
+      passwordHash: hashedPassword,
+      created: new Date().toISOString(),
+      lastLogin: new Date().toISOString()
+    };
+    
+    // Initialize user folder mapping
     user_aliases[alias] = userId;
     
     saveData();
@@ -787,6 +742,122 @@ app.post('/auth/register', async (req, res) => {
     console.error('Registration error:', err);
     return res.status(500).json({ 
       error: 'Failed to create user account: ' + err.message 
+    });
+  }
+});
+
+app.post('/auth/login', async (req, res) => {
+  const { alias, password } = req.body;
+  
+  if (!alias || !password) {
+    return res.status(400).json({ error: 'Alias and password are required' });
+  }
+  
+  try {
+    // Check if user exists
+    if (!user_credentials || !user_credentials[alias]) {
+      return res.status(401).json({ error: 'Invalid alias or password' });
+    }
+    
+    const userCreds = user_credentials[alias];
+    
+    // Verify password
+    const hashedPassword = crypto.createHash('sha256').update(password).digest('hex');
+    if (userCreds.passwordHash !== hashedPassword) {
+      return res.status(401).json({ error: 'Invalid alias or password' });
+    }
+    
+    // Generate new token
+    const token = generateToken();
+    const userId = userCreds.userId;
+    
+    // Store new token
+    access_tokens[token] = {
+      userId,
+      alias,
+      permissions: ['read', 'write', 'upload'],
+      expires: Date.now() + (30 * 24 * 60 * 60 * 1000) // 30 days
+    };
+    
+    // Update last login
+    user_credentials[alias].lastLogin = new Date().toISOString();
+    
+    saveData();
+    
+    // Get user folder info
+    const userFolder = user_folders[alias];
+    const folderContents = folder_contents[alias];
+    const userSites = user_directories[userId]?.dns || [];
+    
+    res.json({
+      success: true,
+      userId,
+      alias,
+      token,
+      userFolder: {
+        cid: userFolder.cid,
+        quota_used: userFolder.quota_used,
+        quota_limit: userFolder.quota_limit,
+        quota_available: userFolder.quota_limit - userFolder.quota_used,
+        gateway_url: `http://localhost:8080/ipfs/${userFolder.cid}`,
+        platform_url: `http://localhost:3000/user-folder/${alias}`
+      },
+      stats: {
+        websites_count: userSites.length,
+        total_files: Object.keys(folderContents?.files || {}).length,
+        last_login: user_credentials[alias].lastLogin,
+        member_since: user_credentials[alias].created
+      },
+      message: `Welcome back, ${alias}!`
+    });
+    
+  } catch (err) {
+    console.error('Login error:', err);
+    return res.status(500).json({ 
+      error: 'Login failed: ' + err.message 
+    });
+  }
+});
+
+app.post('/auth/change-password', requireAuth, async (req, res) => {
+  const { currentPassword, newPassword } = req.body;
+  const alias = req.userAlias;
+  
+  if (!currentPassword || !newPassword) {
+    return res.status(400).json({ error: 'Current and new passwords are required' });
+  }
+  
+  if (newPassword.length < 4) {
+    return res.status(400).json({ error: 'New password must be at least 4 characters long' });
+  }
+  
+  try {
+    if (!user_credentials || !user_credentials[alias]) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+    
+    // Verify current password
+    const currentHashed = crypto.createHash('sha256').update(currentPassword).digest('hex');
+    if (user_credentials[alias].passwordHash !== currentHashed) {
+      return res.status(401).json({ error: 'Current password is incorrect' });
+    }
+    
+    // Update password
+    const newHashed = crypto.createHash('sha256').update(newPassword).digest('hex');
+    user_credentials[alias].passwordHash = newHashed;
+    user_credentials[alias].passwordChanged = new Date().toISOString();
+    
+    saveData();
+    
+    res.json({
+      success: true,
+      message: 'Password changed successfully'
+    });
+    
+  } catch (err) {
+    console.error('Password change error:', err);
+    return res.status(500).json({ 
+      error: 'Password change failed: ' + err.message 
     });
   }
 });
@@ -1695,6 +1766,305 @@ app.post('/command', requireAuth, async (req, res) => {
         }
       }
 
+      case 'delete-website': {
+        const { dns, username } = args;
+        
+        if (!dns) {
+          return res.status(400).json({ error: 'DNS name required' });
+        }
+        
+        const targetUsername = username || req.userAlias;
+        
+        if (targetUsername !== req.userAlias) {
+          return res.status(403).json({ error: 'Access denied' });
+        }
+        
+        try {
+          console.log(`🗑️ Deleting website: ${dns} from ${targetUsername}`);
+          
+          const currentCID = user_folders[targetUsername].cid;
+          const tempDir = path.join(__dirname, 'temp', `delete-${targetUsername}-${Date.now()}`);
+          
+          // Download current folder
+          fs.mkdirSync(tempDir, { recursive: true });
+          await execPromise(`ipfs get ${currentCID} -o ${tempDir}`);
+          
+          // Find the actual content directory
+          let folderDir;
+          const tempContents = fs.readdirSync(tempDir);
+          
+          if (tempContents.includes(currentCID)) {
+            folderDir = path.join(tempDir, currentCID);
+          } else if (tempContents.length === 1 && fs.statSync(path.join(tempDir, tempContents[0])).isDirectory()) {
+            folderDir = path.join(tempDir, tempContents[0]);
+          } else {
+            folderDir = tempDir;
+          }
+          
+          console.log(`📁 Working with folder: ${folderDir}`);
+          
+          let deleted = false;
+          const deletedFrom = [];
+          
+          // Check and delete from root (old structure)
+          const rootWebsitePath = path.join(folderDir, dns);
+          if (fs.existsSync(rootWebsitePath)) {
+            fs.rmSync(rootWebsitePath, { recursive: true, force: true });
+            deleted = true;
+            deletedFrom.push('root');
+            console.log(`✅ Deleted ${dns} from root`);
+          }
+          
+          // Check and delete from websites/ folder (new structure)
+          const websitesWebsitePath = path.join(folderDir, 'websites', dns);
+          if (fs.existsSync(websitesWebsitePath)) {
+            fs.rmSync(websitesWebsitePath, { recursive: true, force: true });
+            deleted = true;
+            deletedFrom.push('websites folder');
+            console.log(`✅ Deleted ${dns} from websites/`);
+          }
+          
+          if (!deleted) {
+            fs.rmSync(tempDir, { recursive: true, force: true });
+            return res.status(404).json({ 
+              error: 'Website not found in folder structure',
+              dns: dns,
+              checked_paths: [rootWebsitePath, websitesWebsitePath]
+            });
+          }
+          
+          // Re-upload to IPFS
+          console.log(`📤 Re-uploading folder after deletion...`);
+          const result = await execPromise(`ipfs add -r .`, folderDir);
+          const lines = result.trim().split('\n');
+          const newCID = lines[lines.length - 1].split(' ')[1];
+          
+          // Update tracking systems
+          const oldCID = user_folders[targetUsername].cid;
+          
+          // Update user folder
+          user_folders[targetUsername].cid = newCID;
+          user_folders[targetUsername].updated = new Date().toISOString();
+          
+          // Remove from tracking
+          if (folder_contents[targetUsername]?.websites?.[dns]) {
+            delete folder_contents[targetUsername].websites[dns];
+          }
+          
+          // Remove from DNS mapping
+          if (dns_map[dns]) {
+            delete dns_map[dns];
+          }
+          
+          // Remove from user directories
+          if (user_directories[req.userId]?.dns) {
+            const index = user_directories[req.userId].dns.indexOf(dns);
+            if (index > -1) {
+              user_directories[req.userId].dns.splice(index, 1);
+            }
+          }
+          
+          // Remove from website CID mapping
+          if (website_cid_mapping?.[dns]) {
+            delete website_cid_mapping[dns];
+          }
+          
+          // Add to history
+          if (!user_folder_cid_history) user_folder_cid_history = {};
+          if (!user_folder_cid_history[targetUsername]) user_folder_cid_history[targetUsername] = [];
+          
+          user_folder_cid_history[targetUsername].push({
+            cid: newCID,
+            previous_cid: oldCID,
+            timestamp: new Date().toISOString(),
+            action: `Deleted website: ${dns}`,
+            websites: Object.keys(folder_contents[targetUsername]?.websites || {}),
+            version: user_folder_cid_history[targetUsername].length + 1
+          });
+          
+          // Update CID redirects
+          if (!cid_redirects) cid_redirects = {};
+          cid_redirects[oldCID] = newCID;
+          
+          // Update counts
+          user_folders[targetUsername].websites_count = Object.keys(folder_contents[targetUsername]?.websites || {}).length;
+          
+          // Cleanup
+          fs.rmSync(tempDir, { recursive: true, force: true });
+          saveData();
+          
+          console.log(`✅ Successfully deleted ${dns}`);
+          
+          return res.json({
+            deleted: true,
+            dns: dns,
+            deleted_from: deletedFrom,
+            old_cid: oldCID,
+            new_cid: newCID,
+            remaining_websites: Object.keys(folder_contents[targetUsername]?.websites || {}),
+            message: `Website ${dns} deleted successfully`
+          });
+          
+        } catch (err) {
+          console.error(`❌ Error deleting website:`, err);
+          if (fs.existsSync(tempDir)) {
+            fs.rmSync(tempDir, { recursive: true, force: true });
+          }
+          return res.status(500).json({ error: 'Failed to delete website: ' + err.message });
+        }
+      }
+
+      case 'delete-all-websites': {
+        const { username, confirm } = args;
+        
+        if (confirm !== 'DELETE_ALL_WEBSITES') {
+          return res.status(400).json({ 
+            error: 'Confirmation required',
+            required_confirm: 'DELETE_ALL_WEBSITES',
+            warning: 'This will delete ALL websites permanently!'
+          });
+        }
+        
+        const targetUsername = username || req.userAlias;
+        
+        if (targetUsername !== req.userAlias) {
+          return res.status(403).json({ error: 'Access denied' });
+        }
+        
+        try {
+          console.log(`🗑️💥 DELETING ALL WEBSITES for ${targetUsername}`);
+          
+          const currentCID = user_folders[targetUsername].cid;
+          const tempDir = path.join(__dirname, 'temp', `delete-all-${targetUsername}-${Date.now()}`);
+          
+          // Download current folder
+          fs.mkdirSync(tempDir, { recursive: true });
+          await execPromise(`ipfs get ${currentCID} -o ${tempDir}`);
+          
+          // Find the actual content directory
+          let folderDir;
+          const tempContents = fs.readdirSync(tempDir);
+          
+          if (tempContents.includes(currentCID)) {
+            folderDir = path.join(tempDir, currentCID);
+          } else if (tempContents.length === 1 && fs.statSync(path.join(tempDir, tempContents[0])).isDirectory()) {
+            folderDir = path.join(tempDir, tempContents[0]);
+          } else {
+            folderDir = tempDir;
+          }
+          
+          console.log(`📁 Working with folder: ${folderDir}`);
+          
+          const deletedWebsites = [];
+          const trackedWebsites = Object.keys(folder_contents[targetUsername]?.websites || {});
+          
+          // Delete all tracked websites from both root and websites/ folder
+          const folderContents = fs.readdirSync(folderDir);
+          
+          // Delete from root (old structure websites)
+          folderContents.forEach(item => {
+            const itemPath = path.join(folderDir, item);
+            // Check if it's a website directory (ends with .username)
+            if (fs.statSync(itemPath).isDirectory() && item.includes('.') && item.endsWith(`.${targetUsername}`)) {
+              fs.rmSync(itemPath, { recursive: true, force: true });
+              deletedWebsites.push(`${item} (from root)`);
+              console.log(`✅ Deleted ${item} from root`);
+            }
+          });
+          
+          // Delete entire websites/ folder (new structure)
+          const websitesDir = path.join(folderDir, 'websites');
+          if (fs.existsSync(websitesDir)) {
+            const websitesInFolder = fs.readdirSync(websitesDir);
+            websitesInFolder.forEach(website => {
+              deletedWebsites.push(`${website} (from websites/)`);
+            });
+            fs.rmSync(websitesDir, { recursive: true, force: true });
+            console.log(`✅ Deleted entire websites/ folder`);
+          }
+          
+          // Recreate empty websites/ folder for future use
+          fs.mkdirSync(path.join(folderDir, 'websites'), { recursive: true });
+          
+          // Re-upload to IPFS
+          console.log(`📤 Re-uploading clean folder...`);
+          const result = await execPromise(`ipfs add -r .`, folderDir);
+          const lines = result.trim().split('\n');
+          const newCID = lines[lines.length - 1].split(' ')[1];
+          
+          // Clear ALL tracking data
+          const oldCID = user_folders[targetUsername].cid;
+          
+          // Update user folder
+          user_folders[targetUsername].cid = newCID;
+          user_folders[targetUsername].updated = new Date().toISOString();
+          user_folders[targetUsername].websites_count = 0;
+          
+          // Clear folder contents
+          if (folder_contents[targetUsername]) {
+            folder_contents[targetUsername].websites = {};
+          }
+          
+          // Remove all DNS mappings for this user
+          const userDnsList = user_directories[req.userId]?.dns || [];
+          userDnsList.forEach(dns => {
+            if (dns_map[dns]) {
+              delete dns_map[dns];
+            }
+            if (website_cid_mapping?.[dns]) {
+              delete website_cid_mapping[dns];
+            }
+          });
+          
+          // Clear user directories
+          if (user_directories[req.userId]) {
+            user_directories[req.userId].dns = [];
+          }
+          
+          // Add to history
+          if (!user_folder_cid_history) user_folder_cid_history = {};
+          if (!user_folder_cid_history[targetUsername]) user_folder_cid_history[targetUsername] = [];
+          
+          user_folder_cid_history[targetUsername].push({
+            cid: newCID,
+            previous_cid: oldCID,
+            timestamp: new Date().toISOString(),
+            action: 'DELETED ALL WEBSITES',
+            websites: [],
+            deleted_websites: deletedWebsites,
+            version: user_folder_cid_history[targetUsername].length + 1
+          });
+          
+          // Update CID redirects
+          if (!cid_redirects) cid_redirects = {};
+          cid_redirects[oldCID] = newCID;
+          
+          // Cleanup
+          fs.rmSync(tempDir, { recursive: true, force: true });
+          saveData();
+          
+          console.log(`✅ Successfully deleted ALL websites for ${targetUsername}`);
+          
+          return res.json({
+            deleted_all: true,
+            username: targetUsername,
+            deleted_websites: deletedWebsites,
+            deleted_count: deletedWebsites.length,
+            old_cid: oldCID,
+            new_cid: newCID,
+            clean_folder_url: `https://uservault.trustgrid.com:8080/ipfs/${newCID}`,
+            message: `All websites deleted successfully. Folder is now clean.`
+          });
+          
+        } catch (err) {
+          console.error(`❌ Error deleting all websites:`, err);
+          if (fs.existsSync(tempDir)) {
+            fs.rmSync(tempDir, { recursive: true, force: true });
+          }
+          return res.status(500).json({ error: 'Failed to delete all websites: ' + err.message });
+        }
+      }
+
       default:
         return res.status(400).json({ error: 'Unknown command' });
     }
@@ -2257,30 +2627,15 @@ app.get('/auth/check-alias/:alias', (req, res) => {
   });
 });
 
-app.get('/user/:alias', (req, res) => {
+app.get('/auth/check-user/:alias', (req, res) => {
   const alias = req.params.alias;
-  const user = getUserByAlias(alias);
   
-  if (!user) {
-    return res.status(404).json({ error: 'User not found' });
-  }
+  const exists = !!(user_credentials && user_credentials[alias]);
   
-  // Return public profile info
-  res.json({
+  res.json({ 
     alias,
-    folder: {
-      cid: user.folder.cid,
-      created: user.folder.created,
-      websites_count: user.folder.websites_count || 0,
-      gateway_url: `http://localhost:8080/ipfs/${user.folder.cid}`,
-      platform_url: `http://localhost:3000/user-folder/${alias}`
-    },
-    websites: user.directory.dns.map(dns => ({
-      dns,
-      cid: dns_map[dns]?.cid,
-      type: dns_map[dns]?.type,
-      created: dns_map[dns]?.created
-    }))
+    exists,
+    message: exists ? 'User found' : 'User not found'
   });
 });
 
