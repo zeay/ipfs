@@ -268,19 +268,42 @@ async function updateUserFolder(username, newContent, contentType, contentSize) 
   const tempDir = path.join(__dirname, 'temp', `update-user-${username}-${Date.now()}`);
   
   try {
+    console.log(`📂 Updating user folder for ${username}`);
+    console.log(`📦 Current CID: ${currentCID}`);
+    
     // Download current folder
     await execPromise(`ipfs get ${currentCID} -o ${tempDir}`);
     const folderDir = path.join(tempDir, currentCID);
+    
+    console.log(`📁 Downloaded folder to: ${folderDir}`);
+    
+    // CRITICAL: Check what exists in the downloaded folder
+    const existingItems = fs.readdirSync(folderDir);
+    console.log(`📋 Existing items in folder:`, existingItems);
+    
+    // Ensure websites directory exists
+    const websitesDir = path.join(folderDir, 'websites');
+    if (!fs.existsSync(websitesDir)) {
+      console.log(`📁 Creating websites directory`);
+      fs.mkdirSync(websitesDir, { recursive: true });
+    } else {
+      const existingWebsites = fs.readdirSync(websitesDir);
+      console.log(`🌐 Existing websites in folder:`, existingWebsites);
+    }
     
     // Track what websites exist before update
     const websitesBefore = [];
     if (folder_contents[username] && folder_contents[username].websites) {
       websitesBefore.push(...Object.keys(folder_contents[username].websites));
     }
+    console.log(`📊 Websites before update:`, websitesBefore);
     
     // Add new content based on type
     if (contentType === 'website') {
       const websiteDir = path.join(folderDir, 'websites', newContent.dns);
+      console.log(`🌐 Adding website: ${newContent.dns} to ${websiteDir}`);
+      
+      // Create website directory (this should ADD to existing websites, not replace)
       fs.mkdirSync(websiteDir, { recursive: true });
       
       // Ensure data directory exists in website
@@ -288,6 +311,7 @@ async function updateUserFolder(username, newContent, contentType, contentSize) 
       fs.mkdirSync(dataDir, { recursive: true });
       
       // Copy website files
+      console.log(`📄 Adding files:`, Object.keys(newContent.files));
       for (const [filename, content] of Object.entries(newContent.files)) {
         const filePath = path.join(websiteDir, filename);
         const fileDir = path.dirname(filePath);
@@ -298,6 +322,7 @@ async function updateUserFolder(username, newContent, contentType, contentSize) 
         } else {
           fs.writeFileSync(filePath, Buffer.from(content, 'base64'));
         }
+        console.log(`✅ Created file: ${filename}`);
       }
       
       // Create data.json for the website
@@ -314,9 +339,10 @@ async function updateUserFolder(username, newContent, contentType, contentSize) 
           folder_path: `websites/${newContent.dns}`
         };
         fs.writeFileSync(dataJsonPath, JSON.stringify(websiteData, null, 2));
+        console.log(`✅ Created data.json for ${newContent.dns}`);
       }
       
-      // Update folder contents tracking
+      // Update folder contents tracking - ADD the new website, don't replace
       if (!folder_contents[username]) folder_contents[username] = { files: {}, websites: {} };
       folder_contents[username].websites[newContent.dns] = {
         estimated_size: contentSize,
@@ -324,6 +350,8 @@ async function updateUserFolder(username, newContent, contentType, contentSize) 
         created: new Date().toISOString(),
         has_data_json: true
       };
+      
+      console.log(`📊 Updated folder contents - now tracking:`, Object.keys(folder_contents[username].websites));
       
     } else if (contentType === 'file') {
       const filePath = path.join(folderDir, 'files', newContent.filename);
@@ -345,10 +373,33 @@ async function updateUserFolder(username, newContent, contentType, contentSize) 
       };
     }
     
+    // VERIFY: Check what websites exist after our changes
+    const websitesAfterDir = path.join(folderDir, 'websites');
+    if (fs.existsSync(websitesAfterDir)) {
+      const websitesAfter = fs.readdirSync(websitesAfterDir);
+      console.log(`🌐 Websites after update:`, websitesAfter);
+      
+      // Ensure all tracked websites actually exist
+      const trackedWebsites = Object.keys(folder_contents[username].websites);
+      console.log(`📊 Tracked websites:`, trackedWebsites);
+      
+      // Check for discrepancies
+      const missingWebsites = trackedWebsites.filter(dns => !websitesAfter.includes(dns));
+      if (missingWebsites.length > 0) {
+        console.error(`❌ MISSING WEBSITES IN FOLDER:`, missingWebsites);
+        console.error(`This indicates a problem with folder preservation!`);
+      }
+    } else {
+      console.error(`❌ Websites directory doesn't exist after update!`);
+    }
+    
     // Re-upload to IPFS
+    console.log(`📤 Re-uploading folder to IPFS...`);
     const result = await execPromise(`ipfs add -r .`, folderDir);
     const lines = result.trim().split('\n');
     const newCID = lines[lines.length - 1].split(' ')[1];
+    
+    console.log(`✅ New CID: ${newCID}`);
     
     // CRITICAL: Update CID tracking system
     const oldCID = user_folders[username].cid;
@@ -359,6 +410,7 @@ async function updateUserFolder(username, newContent, contentType, contentSize) 
     user_folders[username].updated = new Date().toISOString();
     
     // 2. Track CID history for this user folder
+    if (!user_folder_cid_history) user_folder_cid_history = {};
     if (!user_folder_cid_history[username]) {
       user_folder_cid_history[username] = [];
     }
@@ -376,6 +428,7 @@ async function updateUserFolder(username, newContent, contentType, contentSize) 
     });
     
     // 3. Create CID redirect mapping (old CID -> new CID)
+    if (!cid_redirects) cid_redirects = {};
     if (oldCID !== newCID) {
       cid_redirects[oldCID] = newCID;
       
@@ -388,6 +441,7 @@ async function updateUserFolder(username, newContent, contentType, contentSize) 
     }
     
     // 4. Update website CID mapping for all websites in this folder
+    if (!website_cid_mapping) website_cid_mapping = {};
     currentWebsites.forEach(websiteDns => {
       if (!website_cid_mapping[websiteDns]) {
         website_cid_mapping[websiteDns] = {
@@ -404,17 +458,19 @@ async function updateUserFolder(username, newContent, contentType, contentSize) 
     if (contentType === 'website') {
       user_folders[username].websites_count = Object.keys(folder_contents[username].websites).length;
     }
-    user_folders[username].files_count = Object.keys(folder_contents[username].files).length;
+    user_folders[username].files_count = Object.keys(folder_contents[username].files || {}).length;
     
     // Cleanup
     fs.rmSync(tempDir, { recursive: true, force: true });
     
     console.log(`📦 Updated ${username} folder: ${oldCID} → ${newCID}`);
+    console.log(`🌐 Total websites now: ${currentWebsites.length}`);
     console.log(`🔗 Created redirects for ${Object.keys(cid_redirects).length} old CIDs`);
     
     return { oldCID, newCID, quotaUsed: user_folders[username].quota_used };
     
   } catch (err) {
+    console.error(`❌ Error updating user folder:`, err);
     if (fs.existsSync(tempDir)) {
       fs.rmSync(tempDir, { recursive: true, force: true });
     }
@@ -649,22 +705,6 @@ function requireAuth(req, res, next) {
   next();
 }
 
-// ========== Core Command Handlers ==========
-// app.post('/auth/register', (req, res) => {
-//   const userId = generateUserId();
-//   const token = generateToken();
-  
-//   access_tokens[token] = {
-//     userId,
-//     permissions: ['read', 'write', 'upload'],
-//     expires: Date.now() + (30 * 24 * 60 * 60 * 1000) // 30 days
-//   };
-  
-//   user_directories[userId] = { dns: [], files: {} };
-//   saveData();
-  
-//   res.json({ userId, token, message: 'User registered successfully' });
-// });
 
 app.post('/auth/register', async (req, res) => {
   const { alias } = req.body;
@@ -1273,6 +1313,67 @@ app.post('/command', requireAuth, async (req, res) => {
         }
       }
 
+      case 'rebuild-user-folder': {
+        const { username } = args;
+        
+        if (username !== req.userAlias) {
+          return res.status(403).json({ error: 'Access denied' });
+        }
+        
+        try {
+          console.log(`🔨 Rebuilding folder for ${username}`);
+          
+          // Get tracked websites
+          const trackedWebsites = folder_contents[username]?.websites || {};
+          const websitesList = Object.keys(trackedWebsites);
+          
+          if (websitesList.length === 0) {
+            return res.json({ message: 'No websites to rebuild' });
+          }
+          
+          // Get current folder
+          const currentCID = user_folders[username].cid;
+          const tempDir = path.join(__dirname, 'temp', `rebuild-${username}-${Date.now()}`);
+          
+          // Download current folder
+          await execPromise(`ipfs get ${currentCID} -o ${tempDir}`);
+          const folderDir = path.join(tempDir, currentCID);
+          
+          // Check websites directory
+          const websitesDir = path.join(folderDir, 'websites');
+          const existingWebsites = fs.existsSync(websitesDir) ? fs.readdirSync(websitesDir) : [];
+          
+          console.log(`📊 Tracked: ${websitesList.length}, Existing: ${existingWebsites.length}`);
+          
+          const missing = websitesList.filter(dns => !existingWebsites.includes(dns));
+          
+          if (missing.length === 0) {
+            fs.rmSync(tempDir, { recursive: true, force: true });
+            return res.json({ 
+              message: 'All websites exist in folder',
+              tracked: websitesList.length,
+              existing: existingWebsites.length
+            });
+          }
+          
+          console.log(`❌ Missing websites:`, missing);
+          
+          // For now, just report the issue
+          fs.rmSync(tempDir, { recursive: true, force: true });
+          
+          return res.json({
+            error: 'Websites missing from folder',
+            tracked_websites: websitesList,
+            existing_websites: existingWebsites, 
+            missing_websites: missing,
+            suggestion: 'The websites exist in tracking but not in IPFS folder. This indicates a bug in updateUserFolder.'
+          });
+          
+        } catch (err) {
+          return res.status(500).json({ error: 'Rebuild failed: ' + err.message });
+        }
+      }
+
       case 'debug-cid-tracking': {
         const { username } = args;
         
@@ -1305,273 +1406,273 @@ app.post('/command', requireAuth, async (req, res) => {
       }
 
       case 'debug-folder-structure': {
-  const { alias, cid } = args;
-  
-  if (!alias && !cid) {
-    return res.status(400).json({ error: 'Provide either alias or cid' });
-  }
-  
-  try {
-    let targetCID;
-    let targetAlias;
-    
-    if (alias) {
-      targetAlias = alias;
-      targetCID = user_folders[alias]?.cid;
-      if (!targetCID) {
-        return res.status(404).json({ error: `No folder found for alias: ${alias}` });
-      }
-    } else {
-      targetCID = cid;
-      targetAlias = 'unknown';
-    }
-    
-    console.log(`🔍 Debugging folder structure for ${targetAlias} (CID: ${targetCID})`);
-    
-    // Get IPFS tree structure
-    const tree = await getIPFSTree(targetCID, 0, 3); // Max 3 levels deep
-    
-    // Also try direct IPFS ls command
-    let lsOutput = '';
-    try {
-      const lsResult = await execAsync(`ipfs ls -v ${targetCID}`);
-      lsOutput = lsResult.stdout;
-    } catch (err) {
-      lsOutput = `Error: ${err.message}`;
-    }
-    
-    // Get our internal tracking data
-    const folderData = user_folders[targetAlias] || null;
-    const contentsData = folder_contents[targetAlias] || null;
-    const historyData = user_folder_cid_history ? user_folder_cid_history[targetAlias] : null;
-    
-    return res.json({
-      alias: targetAlias,
-      cid: targetCID,
-      ipfs_tree: tree,
-      ipfs_ls_output: lsOutput,
-      internal_folder_data: folderData,
-      internal_contents: contentsData,
-      cid_history: historyData,
-      gateway_url: `https://uservault.trustgrid.com:8080/ipfs/${targetCID}`,
-      debug_urls: {
-        browse_folder: `https://uservault.trustgrid.com:8080/ipfs/${targetCID}`,
-        websites_folder: `https://uservault.trustgrid.com:8080/ipfs/${targetCID}/websites`,
-        files_folder: `https://uservault.trustgrid.com:8080/ipfs/${targetCID}/files`
-      }
-    });
-    
-  } catch (err) {
-    return res.status(500).json({ 
-      error: 'Failed to debug folder structure',
-      details: err.message 
-    });
-  }
-}
-
-case 'debug-website-path': {
-  const { dns } = args;
-  
-  if (!dns) {
-    return res.status(400).json({ error: 'Provide dns name' });
-  }
-  
-  try {
-    // Get DNS mapping
-    const site = dns_map[dns];
-    if (!site) {
-      return res.status(404).json({ error: `DNS ${dns} not found in mapping` });
-    }
-    
-    console.log(`🔍 Debugging website path for ${dns}`);
-    
-    let debugInfo = {
-      dns: dns,
-      dns_mapping: site,
-      expected_path: null,
-      current_folder_cid: null,
-      test_urls: []
-    };
-    
-    if (site.type === 'user-folder-website' && site.user_folder) {
-      const alias = site.user_folder;
-      const currentCID = user_folders[alias]?.cid;
-      const expectedPath = site.folder_path || `websites/${dns}`;
-      
-      debugInfo.expected_path = expectedPath;
-      debugInfo.current_folder_cid = currentCID;
-      debugInfo.alias = alias;
-      
-      // Test various URL patterns
-      const testUrls = [
-        `https://uservault.trustgrid.com:8080/ipfs/${currentCID}`,
-        `https://uservault.trustgrid.com:8080/ipfs/${currentCID}/websites`,
-        `https://uservault.trustgrid.com:8080/ipfs/${currentCID}/websites/${dns}`,
-        `https://uservault.trustgrid.com:8080/ipfs/${currentCID}/${expectedPath}`,
-        `https://uservault.trustgrid.com:8080/ipfs/${currentCID}/${expectedPath}/index.html`
-      ];
-      
-      debugInfo.test_urls = testUrls;
-      
-      // Check if website exists in folder contents
-      const contents = folder_contents[alias];
-      debugInfo.folder_contents = contents;
-      debugInfo.website_in_contents = contents?.websites?.[dns] || null;
-      
-      // Try to get folder structure at website path
-      try {
-        const websiteTree = await getIPFSTree(currentCID);
-        debugInfo.folder_tree = websiteTree;
+        const { alias, cid } = args;
         
-        // Check if websites folder exists
-        if (websiteTree.websites) {
-          debugInfo.websites_folder_exists = true;
-          debugInfo.websites_in_folder = Object.keys(websiteTree.websites);
-          
-          // Check if specific website exists
-          if (websiteTree.websites[dns]) {
-            debugInfo.website_folder_exists = true;
-            debugInfo.website_contents = websiteTree.websites[dns];
-          } else {
-            debugInfo.website_folder_exists = false;
-          }
-        } else {
-          debugInfo.websites_folder_exists = false;
+        if (!alias && !cid) {
+          return res.status(400).json({ error: 'Provide either alias or cid' });
         }
         
-      } catch (err) {
-        debugInfo.tree_error = err.message;
+        try {
+          let targetCID;
+          let targetAlias;
+          
+          if (alias) {
+            targetAlias = alias;
+            targetCID = user_folders[alias]?.cid;
+            if (!targetCID) {
+              return res.status(404).json({ error: `No folder found for alias: ${alias}` });
+            }
+          } else {
+            targetCID = cid;
+            targetAlias = 'unknown';
+          }
+          
+          console.log(`🔍 Debugging folder structure for ${targetAlias} (CID: ${targetCID})`);
+          
+          // Get IPFS tree structure
+          const tree = await getIPFSTree(targetCID, 0, 3); // Max 3 levels deep
+          
+          // Also try direct IPFS ls command
+          let lsOutput = '';
+          try {
+            const lsResult = await execAsync(`ipfs ls -v ${targetCID}`);
+            lsOutput = lsResult.stdout;
+          } catch (err) {
+            lsOutput = `Error: ${err.message}`;
+          }
+          
+          // Get our internal tracking data
+          const folderData = user_folders[targetAlias] || null;
+          const contentsData = folder_contents[targetAlias] || null;
+          const historyData = user_folder_cid_history ? user_folder_cid_history[targetAlias] : null;
+          
+          return res.json({
+            alias: targetAlias,
+            cid: targetCID,
+            ipfs_tree: tree,
+            ipfs_ls_output: lsOutput,
+            internal_folder_data: folderData,
+            internal_contents: contentsData,
+            cid_history: historyData,
+            gateway_url: `https://uservault.trustgrid.com:8080/ipfs/${targetCID}`,
+            debug_urls: {
+              browse_folder: `https://uservault.trustgrid.com:8080/ipfs/${targetCID}`,
+              websites_folder: `https://uservault.trustgrid.com:8080/ipfs/${targetCID}/websites`,
+              files_folder: `https://uservault.trustgrid.com:8080/ipfs/${targetCID}/files`
+            }
+          });
+          
+        } catch (err) {
+          return res.status(500).json({ 
+            error: 'Failed to debug folder structure',
+            details: err.message 
+          });
+        }
       }
-      
-    } else {
-      // Direct IPFS website
-      debugInfo.type = 'direct_ipfs';
-      debugInfo.direct_cid = site.cid;
-      debugInfo.test_urls = [
-        `https://uservault.trustgrid.com:8080/ipfs/${site.cid}`,
-        `https://uservault.trustgrid.com:8080/ipfs/${site.cid}/index.html`
-      ];
-    }
-    
-    return res.json(debugInfo);
-    
-  } catch (err) {
-    return res.status(500).json({ 
-      error: 'Failed to debug website path',
-      details: err.message 
-    });
-  }
-}
 
-case 'debug-all-user-data': {
-  const { alias } = args;
-  
-  if (alias && alias !== req.userAlias) {
-    return res.status(403).json({ error: 'Can only debug your own data' });
-  }
-  
-  const targetAlias = alias || req.userAlias;
-  
-  return res.json({
-    alias: targetAlias,
-    user_id: req.userId,
-    user_folders_entry: user_folders[targetAlias] || null,
-    folder_contents_entry: folder_contents[targetAlias] || null,
-    user_aliases_entry: user_aliases[targetAlias] || null,
-    user_directories_entry: user_directories[req.userId] || null,
-    cid_history: user_folder_cid_history ? user_folder_cid_history[targetAlias] : null,
-    website_mappings: website_cid_mapping ? 
-      Object.fromEntries(
-        Object.entries(website_cid_mapping).filter(([dns, info]) => dns.endsWith(`.${targetAlias}`))
-      ) : null,
-    dns_mappings: Object.fromEntries(
-      Object.entries(dns_map).filter(([dns, site]) => 
-        site.user_folder === targetAlias || site.owner === req.userId
-      )
-    ),
-    available_redirects: cid_redirects ? 
-      Object.fromEntries(
-        Object.entries(cid_redirects).filter(([oldCid, newCid]) => 
-          user_folders[targetAlias]?.cid === newCid
-        )
-      ) : null
-  });
-}
-
-case 'test-ipfs-access': {
-  const { cid, path = '' } = args;
-  
-  if (!cid) {
-    return res.status(400).json({ error: 'Provide CID to test' });
-  }
-  
-  try {
-    console.log(`🧪 Testing IPFS access: ${cid}/${path}`);
-    
-    // Test local IPFS access
-    const localURL = `http://localhost:8080/ipfs/${cid}/${path}`;
-    const productionURL = `https://uservault.trustgrid.com:8080/ipfs/${cid}/${path}`;
-    
-    let localResult = null;
-    let productionResult = null;
-    
-    // Test local access
-    try {
-      const localResponse = await fetch(localURL, { 
-        method: 'HEAD',
-        timeout: 5000 
-      });
-      localResult = {
-        status: localResponse.status,
-        statusText: localResponse.statusText,
-        accessible: localResponse.ok
-      };
-    } catch (err) {
-      localResult = {
-        error: err.message,
-        accessible: false
-      };
-    }
-    
-    // Test production access
-    try {
-      const prodResponse = await fetch(productionURL, { 
-        method: 'HEAD',
-        timeout: 5000 
-      });
-      productionResult = {
-        status: prodResponse.status,
-        statusText: prodResponse.statusText,
-        accessible: prodResponse.ok
-      };
-    } catch (err) {
-      productionResult = {
-        error: err.message,
-        accessible: false
-      };
-    }
-    
-    return res.json({
-      cid,
-      path,
-      local_url: localURL,
-      production_url: productionURL,
-      local_result: localResult,
-      production_result: productionResult,
-      recommendations: {
-        use_local_if_accessible: localResult.accessible,
-        use_production_if_accessible: productionResult.accessible,
-        try_without_path: path ? `Test with empty path: ${cid}` : null
+      case 'debug-website-path': {
+        const { dns } = args;
+        
+        if (!dns) {
+          return res.status(400).json({ error: 'Provide dns name' });
+        }
+        
+        try {
+          // Get DNS mapping
+          const site = dns_map[dns];
+          if (!site) {
+            return res.status(404).json({ error: `DNS ${dns} not found in mapping` });
+          }
+          
+          console.log(`🔍 Debugging website path for ${dns}`);
+          
+          let debugInfo = {
+            dns: dns,
+            dns_mapping: site,
+            expected_path: null,
+            current_folder_cid: null,
+            test_urls: []
+          };
+          
+          if (site.type === 'user-folder-website' && site.user_folder) {
+            const alias = site.user_folder;
+            const currentCID = user_folders[alias]?.cid;
+            const expectedPath = site.folder_path || `websites/${dns}`;
+            
+            debugInfo.expected_path = expectedPath;
+            debugInfo.current_folder_cid = currentCID;
+            debugInfo.alias = alias;
+            
+            // Test various URL patterns
+            const testUrls = [
+              `https://uservault.trustgrid.com:8080/ipfs/${currentCID}`,
+              `https://uservault.trustgrid.com:8080/ipfs/${currentCID}/websites`,
+              `https://uservault.trustgrid.com:8080/ipfs/${currentCID}/websites/${dns}`,
+              `https://uservault.trustgrid.com:8080/ipfs/${currentCID}/${expectedPath}`,
+              `https://uservault.trustgrid.com:8080/ipfs/${currentCID}/${expectedPath}/index.html`
+            ];
+            
+            debugInfo.test_urls = testUrls;
+            
+            // Check if website exists in folder contents
+            const contents = folder_contents[alias];
+            debugInfo.folder_contents = contents;
+            debugInfo.website_in_contents = contents?.websites?.[dns] || null;
+            
+            // Try to get folder structure at website path
+            try {
+              const websiteTree = await getIPFSTree(currentCID);
+              debugInfo.folder_tree = websiteTree;
+              
+              // Check if websites folder exists
+              if (websiteTree.websites) {
+                debugInfo.websites_folder_exists = true;
+                debugInfo.websites_in_folder = Object.keys(websiteTree.websites);
+                
+                // Check if specific website exists
+                if (websiteTree.websites[dns]) {
+                  debugInfo.website_folder_exists = true;
+                  debugInfo.website_contents = websiteTree.websites[dns];
+                } else {
+                  debugInfo.website_folder_exists = false;
+                }
+              } else {
+                debugInfo.websites_folder_exists = false;
+              }
+              
+            } catch (err) {
+              debugInfo.tree_error = err.message;
+            }
+            
+          } else {
+            // Direct IPFS website
+            debugInfo.type = 'direct_ipfs';
+            debugInfo.direct_cid = site.cid;
+            debugInfo.test_urls = [
+              `https://uservault.trustgrid.com:8080/ipfs/${site.cid}`,
+              `https://uservault.trustgrid.com:8080/ipfs/${site.cid}/index.html`
+            ];
+          }
+          
+          return res.json(debugInfo);
+          
+        } catch (err) {
+          return res.status(500).json({ 
+            error: 'Failed to debug website path',
+            details: err.message 
+          });
+        }
       }
-    });
-    
-  } catch (err) {
-    return res.status(500).json({ 
-      error: 'Failed to test IPFS access',
-      details: err.message 
-    });
-  }
-}
+
+      case 'debug-all-user-data': {
+        const { alias } = args;
+        
+        if (alias && alias !== req.userAlias) {
+          return res.status(403).json({ error: 'Can only debug your own data' });
+        }
+        
+        const targetAlias = alias || req.userAlias;
+        
+        return res.json({
+          alias: targetAlias,
+          user_id: req.userId,
+          user_folders_entry: user_folders[targetAlias] || null,
+          folder_contents_entry: folder_contents[targetAlias] || null,
+          user_aliases_entry: user_aliases[targetAlias] || null,
+          user_directories_entry: user_directories[req.userId] || null,
+          cid_history: user_folder_cid_history ? user_folder_cid_history[targetAlias] : null,
+          website_mappings: website_cid_mapping ? 
+            Object.fromEntries(
+              Object.entries(website_cid_mapping).filter(([dns, info]) => dns.endsWith(`.${targetAlias}`))
+            ) : null,
+          dns_mappings: Object.fromEntries(
+            Object.entries(dns_map).filter(([dns, site]) => 
+              site.user_folder === targetAlias || site.owner === req.userId
+            )
+          ),
+          available_redirects: cid_redirects ? 
+            Object.fromEntries(
+              Object.entries(cid_redirects).filter(([oldCid, newCid]) => 
+                user_folders[targetAlias]?.cid === newCid
+              )
+            ) : null
+        });
+      }
+
+      case 'test-ipfs-access': {
+        const { cid, path = '' } = args;
+        
+        if (!cid) {
+          return res.status(400).json({ error: 'Provide CID to test' });
+        }
+        
+        try {
+          console.log(`🧪 Testing IPFS access: ${cid}/${path}`);
+          
+          // Test local IPFS access
+          const localURL = `http://localhost:8080/ipfs/${cid}/${path}`;
+          const productionURL = `https://uservault.trustgrid.com:8080/ipfs/${cid}/${path}`;
+          
+          let localResult = null;
+          let productionResult = null;
+          
+          // Test local access
+          try {
+            const localResponse = await fetch(localURL, { 
+              method: 'HEAD',
+              timeout: 5000 
+            });
+            localResult = {
+              status: localResponse.status,
+              statusText: localResponse.statusText,
+              accessible: localResponse.ok
+            };
+          } catch (err) {
+            localResult = {
+              error: err.message,
+              accessible: false
+            };
+          }
+          
+          // Test production access
+          try {
+            const prodResponse = await fetch(productionURL, { 
+              method: 'HEAD',
+              timeout: 5000 
+            });
+            productionResult = {
+              status: prodResponse.status,
+              statusText: prodResponse.statusText,
+              accessible: prodResponse.ok
+            };
+          } catch (err) {
+            productionResult = {
+              error: err.message,
+              accessible: false
+            };
+          }
+          
+          return res.json({
+            cid,
+            path,
+            local_url: localURL,
+            production_url: productionURL,
+            local_result: localResult,
+            production_result: productionResult,
+            recommendations: {
+              use_local_if_accessible: localResult.accessible,
+              use_production_if_accessible: productionResult.accessible,
+              try_without_path: path ? `Test with empty path: ${cid}` : null
+            }
+          });
+          
+        } catch (err) {
+          return res.status(500).json({ 
+            error: 'Failed to test IPFS access',
+            details: err.message 
+          });
+        }
+      }
 
       default:
         return res.status(400).json({ error: 'Unknown command' });
@@ -1882,56 +1983,6 @@ app.post('/upload-zip', requireAuth, upload.single('zipfile'), async (req, res) 
     }
   });
 
-// ========== Content Resolution ==========
-// app.post('/resolve-ipfs', async (req, res) => {
-//   let { cid, filePath = '' } = req.body;
-  
-//   // Special handling for user folder websites
-//   if (filePath.includes('websites/') && filePath.includes('data/data.json')) {
-//     // This is a request for website data in a user folder
-//     const pathParts = filePath.split('/');
-//     const websiteIndex = pathParts.indexOf('websites');
-    
-//     if (websiteIndex >= 0 && pathParts.length > websiteIndex + 2) {
-//       const websiteName = pathParts[websiteIndex + 1];
-      
-//       // Check if this website exists in DNS mapping
-//       const site = Object.values(dns_map).find(s => 
-//         s.type === 'user-folder-website' && 
-//         s.folder_path === `websites/${websiteName}`
-//       );
-      
-//       if (site) {
-//         // Get current folder CID
-//         const currentFolderCID = user_folders[site.user_folder]?.cid;
-//         if (currentFolderCID) {
-//           cid = currentFolderCID;
-//           console.log(`Redirecting to current folder CID: ${currentFolderCID} for path: ${filePath}`);
-//         }
-//       }
-//     }
-//   }
-  
-//   const fileURL = `http://localhost:8080/ipfs/${cid}/${filePath}`;
-//   console.log("🔗 Proxying:", fileURL);
-  
-//   try {
-//     const response = await fetch(fileURL);
-//     const contentType = response.headers.get('content-type') || 'text/plain';
-//     res.setHeader('Content-Type', contentType);
-    
-//     if (contentType.startsWith('text/') || contentType.includes('json')) {
-//       const data = await response.text();
-//       res.send(data);
-//     } else {
-//       const buffer = await response.buffer();
-//       res.send(buffer);
-//     }
-//   } catch (err) {
-//     console.error("❌ Fetch error:", err.message);
-//     res.status(500).send('Fetch error: ' + err.message);
-//   }
-// });
 
 app.get('/site/:dns', async (req, res) => {
   const dns = req.params.dns;
