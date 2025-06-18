@@ -271,39 +271,57 @@ async function updateUserFolder(username, newContent, contentType, contentSize) 
     console.log(`📂 Updating user folder for ${username}`);
     console.log(`📦 Current CID: ${currentCID}`);
     
-    // Download current folder
+    // Create temp directory
+    fs.mkdirSync(tempDir, { recursive: true });
+    
+    // Download current folder - FIXED: handle IPFS get properly
+    console.log(`📥 Downloading current folder...`);
     await execPromise(`ipfs get ${currentCID} -o ${tempDir}`);
-    const folderDir = path.join(tempDir, currentCID);
     
-    console.log(`📁 Downloaded folder to: ${folderDir}`);
+    // CRITICAL FIX: Find the actual content directory
+    let folderDir;
+    const tempContents = fs.readdirSync(tempDir);
+    console.log(`📋 Contents of temp dir:`, tempContents);
     
-    // CRITICAL: Check what exists in the downloaded folder
+    if (tempContents.includes(currentCID)) {
+      // Standard case: /temp/QmXXX/
+      folderDir = path.join(tempDir, currentCID);
+    } else if (tempContents.length === 1 && fs.statSync(path.join(tempDir, tempContents[0])).isDirectory()) {
+      // Alternative case: /temp/some-other-name/
+      folderDir = path.join(tempDir, tempContents[0]);
+    } else {
+      // Content is directly in temp dir
+      folderDir = tempDir;
+    }
+    
+    console.log(`📁 Using folder directory: ${folderDir}`);
+    
+    // Verify the folder directory exists and check its contents
+    if (!fs.existsSync(folderDir)) {
+      console.error(`❌ Folder directory doesn't exist: ${folderDir}`);
+      console.error(`Available paths:`, tempContents);
+      throw new Error(`Downloaded folder not found at expected path: ${folderDir}`);
+    }
+    
     const existingItems = fs.readdirSync(folderDir);
-    console.log(`📋 Existing items in folder:`, existingItems);
+    console.log(`📋 Existing items in downloaded folder:`, existingItems);
     
-    // Ensure websites directory exists
+    // Ensure websites directory exists and check what's in it
     const websitesDir = path.join(folderDir, 'websites');
     if (!fs.existsSync(websitesDir)) {
       console.log(`📁 Creating websites directory`);
       fs.mkdirSync(websitesDir, { recursive: true });
     } else {
       const existingWebsites = fs.readdirSync(websitesDir);
-      console.log(`🌐 Existing websites in folder:`, existingWebsites);
+      console.log(`🌐 Existing websites in downloaded folder:`, existingWebsites);
     }
-    
-    // Track what websites exist before update
-    const websitesBefore = [];
-    if (folder_contents[username] && folder_contents[username].websites) {
-      websitesBefore.push(...Object.keys(folder_contents[username].websites));
-    }
-    console.log(`📊 Websites before update:`, websitesBefore);
     
     // Add new content based on type
     if (contentType === 'website') {
       const websiteDir = path.join(folderDir, 'websites', newContent.dns);
-      console.log(`🌐 Adding website: ${newContent.dns} to ${websiteDir}`);
+      console.log(`🌐 Creating new website: ${newContent.dns} at ${websiteDir}`);
       
-      // Create website directory (this should ADD to existing websites, not replace)
+      // Create website directory
       fs.mkdirSync(websiteDir, { recursive: true });
       
       // Ensure data directory exists in website
@@ -342,7 +360,7 @@ async function updateUserFolder(username, newContent, contentType, contentSize) 
         console.log(`✅ Created data.json for ${newContent.dns}`);
       }
       
-      // Update folder contents tracking - ADD the new website, don't replace
+      // Update folder contents tracking
       if (!folder_contents[username]) folder_contents[username] = { files: {}, websites: {} };
       folder_contents[username].websites[newContent.dns] = {
         estimated_size: contentSize,
@@ -351,9 +369,13 @@ async function updateUserFolder(username, newContent, contentType, contentSize) 
         has_data_json: true
       };
       
-      console.log(`📊 Updated folder contents - now tracking:`, Object.keys(folder_contents[username].websites));
-      
     } else if (contentType === 'file') {
+      // Ensure files directory exists
+      const filesDir = path.join(folderDir, 'files');
+      if (!fs.existsSync(filesDir)) {
+        fs.mkdirSync(filesDir, { recursive: true });
+      }
+      
       const filePath = path.join(folderDir, 'files', newContent.filename);
       const fileDir = path.dirname(filePath);
       fs.mkdirSync(fileDir, { recursive: true });
@@ -373,35 +395,33 @@ async function updateUserFolder(username, newContent, contentType, contentSize) 
       };
     }
     
-    // VERIFY: Check what websites exist after our changes
-    const websitesAfterDir = path.join(folderDir, 'websites');
-    if (fs.existsSync(websitesAfterDir)) {
-      const websitesAfter = fs.readdirSync(websitesAfterDir);
-      console.log(`🌐 Websites after update:`, websitesAfter);
+    // VERIFY: Check final state before upload
+    const finalWebsitesDir = path.join(folderDir, 'websites');
+    if (fs.existsSync(finalWebsitesDir)) {
+      const finalWebsites = fs.readdirSync(finalWebsitesDir);
+      console.log(`🌐 Final websites before upload:`, finalWebsites);
       
-      // Ensure all tracked websites actually exist
-      const trackedWebsites = Object.keys(folder_contents[username].websites);
-      console.log(`📊 Tracked websites:`, trackedWebsites);
-      
-      // Check for discrepancies
-      const missingWebsites = trackedWebsites.filter(dns => !websitesAfter.includes(dns));
-      if (missingWebsites.length > 0) {
-        console.error(`❌ MISSING WEBSITES IN FOLDER:`, missingWebsites);
-        console.error(`This indicates a problem with folder preservation!`);
-      }
+      // Verify each website has proper structure
+      finalWebsites.forEach(websiteName => {
+        const websitePath = path.join(finalWebsitesDir, websiteName);
+        if (fs.existsSync(websitePath) && fs.statSync(websitePath).isDirectory()) {
+          const websiteFiles = fs.readdirSync(websitePath);
+          console.log(`  📂 ${websiteName}:`, websiteFiles);
+        }
+      });
     } else {
-      console.error(`❌ Websites directory doesn't exist after update!`);
+      console.error(`❌ Websites directory missing before upload!`);
     }
     
     // Re-upload to IPFS
-    console.log(`📤 Re-uploading folder to IPFS...`);
+    console.log(`📤 Re-uploading folder to IPFS from: ${folderDir}`);
     const result = await execPromise(`ipfs add -r .`, folderDir);
     const lines = result.trim().split('\n');
     const newCID = lines[lines.length - 1].split(' ')[1];
     
     console.log(`✅ New CID: ${newCID}`);
     
-    // CRITICAL: Update CID tracking system
+    // Update tracking systems
     const oldCID = user_folders[username].cid;
     
     // 1. Update user folder data
@@ -409,13 +429,12 @@ async function updateUserFolder(username, newContent, contentType, contentSize) 
     user_folders[username].quota_used += contentSize;
     user_folders[username].updated = new Date().toISOString();
     
-    // 2. Track CID history for this user folder
+    // 2. Track CID history
     if (!user_folder_cid_history) user_folder_cid_history = {};
     if (!user_folder_cid_history[username]) {
       user_folder_cid_history[username] = [];
     }
     
-    // Get current websites list
     const currentWebsites = Object.keys(folder_contents[username].websites || {});
     
     user_folder_cid_history[username].push({
@@ -423,24 +442,17 @@ async function updateUserFolder(username, newContent, contentType, contentSize) 
       previous_cid: oldCID,
       timestamp: new Date().toISOString(),
       action: contentType === 'website' ? `Added website: ${newContent.dns}` : `Added file: ${newContent.filename}`,
-      websites: [...currentWebsites], // All websites in this CID
+      websites: [...currentWebsites],
       version: user_folder_cid_history[username].length + 1
     });
     
-    // 3. Create CID redirect mapping (old CID -> new CID)
+    // 3. Create CID redirects
     if (!cid_redirects) cid_redirects = {};
     if (oldCID !== newCID) {
       cid_redirects[oldCID] = newCID;
-      
-      // Also create redirects for all previous CIDs of this user
-      user_folder_cid_history[username].forEach(entry => {
-        if (entry.cid !== newCID) {
-          cid_redirects[entry.cid] = newCID;
-        }
-      });
     }
     
-    // 4. Update website CID mapping for all websites in this folder
+    // 4. Update website CID mapping
     if (!website_cid_mapping) website_cid_mapping = {};
     currentWebsites.forEach(websiteDns => {
       if (!website_cid_mapping[websiteDns]) {
@@ -449,7 +461,6 @@ async function updateUserFolder(username, newContent, contentType, contentSize) 
           path: `websites/${websiteDns}`
         };
       }
-      // Always update current CID
       website_cid_mapping[websiteDns].current_folder_cid = newCID;
       website_cid_mapping[websiteDns].last_updated = new Date().toISOString();
     });
@@ -463,9 +474,8 @@ async function updateUserFolder(username, newContent, contentType, contentSize) 
     // Cleanup
     fs.rmSync(tempDir, { recursive: true, force: true });
     
-    console.log(`📦 Updated ${username} folder: ${oldCID} → ${newCID}`);
+    console.log(`📦 Successfully updated ${username} folder: ${oldCID} → ${newCID}`);
     console.log(`🌐 Total websites now: ${currentWebsites.length}`);
-    console.log(`🔗 Created redirects for ${Object.keys(cid_redirects).length} old CIDs`);
     
     return { oldCID, newCID, quotaUsed: user_folders[username].quota_used };
     
@@ -1323,54 +1333,65 @@ app.post('/command', requireAuth, async (req, res) => {
         try {
           console.log(`🔨 Rebuilding folder for ${username}`);
           
-          // Get tracked websites
-          const trackedWebsites = folder_contents[username]?.websites || {};
-          const websitesList = Object.keys(trackedWebsites);
-          
-          if (websitesList.length === 0) {
-            return res.json({ message: 'No websites to rebuild' });
-          }
-          
-          // Get current folder
           const currentCID = user_folders[username].cid;
           const tempDir = path.join(__dirname, 'temp', `rebuild-${username}-${Date.now()}`);
           
-          // Download current folder
+          // Download and check actual structure
+          fs.mkdirSync(tempDir, { recursive: true });
           await execPromise(`ipfs get ${currentCID} -o ${tempDir}`);
-          const folderDir = path.join(tempDir, currentCID);
           
-          // Check websites directory
-          const websitesDir = path.join(folderDir, 'websites');
-          const existingWebsites = fs.existsSync(websitesDir) ? fs.readdirSync(websitesDir) : [];
+          // Find the actual content directory (same logic as updateUserFolder)
+          let folderDir;
+          const tempContents = fs.readdirSync(tempDir);
           
-          console.log(`📊 Tracked: ${websitesList.length}, Existing: ${existingWebsites.length}`);
-          
-          const missing = websitesList.filter(dns => !existingWebsites.includes(dns));
-          
-          if (missing.length === 0) {
-            fs.rmSync(tempDir, { recursive: true, force: true });
-            return res.json({ 
-              message: 'All websites exist in folder',
-              tracked: websitesList.length,
-              existing: existingWebsites.length
-            });
+          if (tempContents.includes(currentCID)) {
+            folderDir = path.join(tempDir, currentCID);
+          } else if (tempContents.length === 1 && fs.statSync(path.join(tempDir, tempContents[0])).isDirectory()) {
+            folderDir = path.join(tempDir, tempContents[0]);
+          } else {
+            folderDir = tempDir;
           }
           
-          console.log(`❌ Missing websites:`, missing);
+          // Check what actually exists
+          const folderContents = fs.readdirSync(folderDir);
+          console.log(`📋 Actual folder contents:`, folderContents);
           
-          // For now, just report the issue
+          let actualWebsites = [];
+          const websitesDir = path.join(folderDir, 'websites');
+          if (fs.existsSync(websitesDir)) {
+            actualWebsites = fs.readdirSync(websitesDir).filter(item => 
+              fs.statSync(path.join(websitesDir, item)).isDirectory()
+            );
+          }
+          
+          // Get tracked websites
+          const trackedWebsites = Object.keys(folder_contents[username]?.websites || {});
+          
+          // Compare
+          const missing = trackedWebsites.filter(dns => !actualWebsites.includes(dns));
+          const untracked = actualWebsites.filter(dns => !trackedWebsites.includes(dns));
+          
+          // Cleanup
           fs.rmSync(tempDir, { recursive: true, force: true });
           
           return res.json({
-            error: 'Websites missing from folder',
-            tracked_websites: websitesList,
-            existing_websites: existingWebsites, 
-            missing_websites: missing,
-            suggestion: 'The websites exist in tracking but not in IPFS folder. This indicates a bug in updateUserFolder.'
+            username,
+            current_cid: currentCID,
+            folder_contents: folderContents,
+            tracked_websites: trackedWebsites,
+            actual_websites: actualWebsites,
+            missing_from_ipfs: missing,
+            untracked_in_system: untracked,
+            status: missing.length === 0 ? 'All websites exist in IPFS' : 'Some websites missing',
+            test_urls: actualWebsites.map(dns => ({
+              dns,
+              url: `https://uservault.trustgrid.com:8080/ipfs/${currentCID}/websites/${dns}`,
+              platform_url: `https://synqstorage.trustgrid.com:3000/site/${dns}`
+            }))
           });
           
         } catch (err) {
-          return res.status(500).json({ error: 'Rebuild failed: ' + err.message });
+          return res.status(500).json({ error: 'Rebuild check failed: ' + err.message });
         }
       }
 
