@@ -1614,56 +1614,55 @@ app.post('/upload-zip', requireAuth, upload.single('zipfile'), async (req, res) 
   });
 
 // ========== Content Resolution ==========
-app.post('/resolve-ipfs', async (req, res) => {
-  let { cid, filePath = '' } = req.body;
+// app.post('/resolve-ipfs', async (req, res) => {
+//   let { cid, filePath = '' } = req.body;
   
-  // Special handling for user folder websites
-  if (filePath.includes('websites/') && filePath.includes('data/data.json')) {
-    // This is a request for website data in a user folder
-    const pathParts = filePath.split('/');
-    const websiteIndex = pathParts.indexOf('websites');
+//   // Special handling for user folder websites
+//   if (filePath.includes('websites/') && filePath.includes('data/data.json')) {
+//     // This is a request for website data in a user folder
+//     const pathParts = filePath.split('/');
+//     const websiteIndex = pathParts.indexOf('websites');
     
-    if (websiteIndex >= 0 && pathParts.length > websiteIndex + 2) {
-      const websiteName = pathParts[websiteIndex + 1];
+//     if (websiteIndex >= 0 && pathParts.length > websiteIndex + 2) {
+//       const websiteName = pathParts[websiteIndex + 1];
       
-      // Check if this website exists in DNS mapping
-      const site = Object.values(dns_map).find(s => 
-        s.type === 'user-folder-website' && 
-        s.folder_path === `websites/${websiteName}`
-      );
+//       // Check if this website exists in DNS mapping
+//       const site = Object.values(dns_map).find(s => 
+//         s.type === 'user-folder-website' && 
+//         s.folder_path === `websites/${websiteName}`
+//       );
       
-      if (site) {
-        // Get current folder CID
-        const currentFolderCID = user_folders[site.user_folder]?.cid;
-        if (currentFolderCID) {
-          cid = currentFolderCID;
-          console.log(`Redirecting to current folder CID: ${currentFolderCID} for path: ${filePath}`);
-        }
-      }
-    }
-  }
+//       if (site) {
+//         // Get current folder CID
+//         const currentFolderCID = user_folders[site.user_folder]?.cid;
+//         if (currentFolderCID) {
+//           cid = currentFolderCID;
+//           console.log(`Redirecting to current folder CID: ${currentFolderCID} for path: ${filePath}`);
+//         }
+//       }
+//     }
+//   }
   
-  const fileURL = `http://localhost:8080/ipfs/${cid}/${filePath}`;
-  console.log("🔗 Proxying:", fileURL);
+//   const fileURL = `http://localhost:8080/ipfs/${cid}/${filePath}`;
+//   console.log("🔗 Proxying:", fileURL);
   
-  try {
-    const response = await fetch(fileURL);
-    const contentType = response.headers.get('content-type') || 'text/plain';
-    res.setHeader('Content-Type', contentType);
+//   try {
+//     const response = await fetch(fileURL);
+//     const contentType = response.headers.get('content-type') || 'text/plain';
+//     res.setHeader('Content-Type', contentType);
     
-    if (contentType.startsWith('text/') || contentType.includes('json')) {
-      const data = await response.text();
-      res.send(data);
-    } else {
-      const buffer = await response.buffer();
-      res.send(buffer);
-    }
-  } catch (err) {
-    console.error("❌ Fetch error:", err.message);
-    res.status(500).send('Fetch error: ' + err.message);
-  }
-});
-
+//     if (contentType.startsWith('text/') || contentType.includes('json')) {
+//       const data = await response.text();
+//       res.send(data);
+//     } else {
+//       const buffer = await response.buffer();
+//       res.send(buffer);
+//     }
+//   } catch (err) {
+//     console.error("❌ Fetch error:", err.message);
+//     res.status(500).send('Fetch error: ' + err.message);
+//   }
+// });
 
 app.get('/site/:dns', async (req, res) => {
   const dns = req.params.dns;
@@ -1688,7 +1687,7 @@ app.get('/site/:dns', async (req, res) => {
     let currentFolderCID = user_folders[site.user_folder]?.cid;
     
     // Double-check with website CID mapping
-    if (website_cid_mapping[dns]) {
+    if (website_cid_mapping && website_cid_mapping[dns]) {
       currentFolderCID = website_cid_mapping[dns].current_folder_cid;
     }
     
@@ -1701,8 +1700,13 @@ app.get('/site/:dns', async (req, res) => {
     console.log(`🔗 Redirecting ${dns} to current CID: ${currentFolderCID}`);
     return res.redirect(websiteURL);
   } else {
-    // Traditional direct IPFS website
-    return res.redirect(`https://uservault.trustgrid.com:8080/ipfs/${site.cid}`);
+    // Traditional direct IPFS website - check for redirects
+    let targetCID = site.cid;
+    if (cid_redirects && cid_redirects[site.cid]) {
+      targetCID = cid_redirects[site.cid];
+      console.log(`🔄 Direct site CID redirect: ${site.cid} → ${targetCID}`);
+    }
+    return res.redirect(`https://uservault.trustgrid.com:8080/ipfs/${targetCID}`);
   }
 });
 
@@ -1968,21 +1972,57 @@ app.get('/stats', (req, res) => {
   });
 });
 
-app.get('/ipfs/:cid/*?', (req, res) => {
-  const requestedCID = req.params.cid;
-  const path = req.params[0] || '';
+app.post('/resolve-ipfs', async (req, res) => {
+  let { cid, filePath = '' } = req.body;
   
-  // Check if this is an old CID that needs redirecting
-  if (cid_redirects[requestedCID]) {
-    const currentCID = cid_redirects[requestedCID];
-    const redirectURL = `https://uservault.trustgrid.com:8080/ipfs/${currentCID}/${path}`;
-    console.log(`🔄 CID Redirect: ${requestedCID} → ${currentCID}`);
-    return res.redirect(301, redirectURL);
+  console.log(`📡 Resolve request: CID=${cid}, Path=${filePath}`);
+  
+  // IMPORTANT: Check if this is an old CID that needs redirecting
+  if (cid_redirects && cid_redirects[cid]) {
+    const currentCID = cid_redirects[cid];
+    console.log(`🔄 CID Redirect: ${cid} → ${currentCID}`);
+    cid = currentCID; // Use the current CID
   }
   
-  // If no redirect needed, proxy to IPFS gateway
-  const ipfsURL = `https://uservault.trustgrid.com:8080/ipfs/${requestedCID}/${path}`;
-  return res.redirect(ipfsURL);
+  // Special handling for user folder websites
+  if (filePath.includes('websites/') && filePath.includes('data/data.json')) {
+    // This is a request for website data in a user folder
+    const pathParts = filePath.split('/');
+    const websiteIndex = pathParts.indexOf('websites');
+    
+    if (websiteIndex >= 0 && pathParts.length > websiteIndex + 2) {
+      const websiteName = pathParts[websiteIndex + 1];
+      
+      // Check if this website exists in website CID mapping
+      if (website_cid_mapping && website_cid_mapping[websiteName]) {
+        const currentFolderCID = website_cid_mapping[websiteName].current_folder_cid;
+        if (currentFolderCID) {
+          cid = currentFolderCID;
+          console.log(`📂 Using current folder CID for ${websiteName}: ${currentFolderCID}`);
+        }
+      }
+    }
+  }
+  
+  const fileURL = `http://localhost:8080/ipfs/${cid}/${filePath}`;
+  console.log("🔗 Proxying:", fileURL);
+  
+  try {
+    const response = await fetch(fileURL);
+    const contentType = response.headers.get('content-type') || 'text/plain';
+    res.setHeader('Content-Type', contentType);
+    
+    if (contentType.startsWith('text/') || contentType.includes('json')) {
+      const data = await response.text();
+      res.send(data);
+    } else {
+      const buffer = await response.buffer();
+      res.send(buffer);
+    }
+  } catch (err) {
+    console.error("❌ Fetch error:", err.message);
+    res.status(500).send('Fetch error: ' + err.message);
+  }
 });
 
 
