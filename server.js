@@ -1389,59 +1389,198 @@ app.post('/command', requireAuth, async (req, res) => {
         return res.json({ dns, filename, newCID, deleted: true });
       }
 
-      case 'list-user-sites': {
-        // Get user's sites from both old system and new folder system
-        const userSites = user_directories[req.userId]?.dns || [];
-        const allSites = [];
+      // case 'list-user-sites': {
+      //   // Get user's sites from both old system and new folder system
+      //   const userSites = user_directories[req.userId]?.dns || [];
+      //   const allSites = [];
         
-        console.log('Loading sites for user:', req.userId, 'alias:', req.userAlias);
+      //   console.log('Loading sites for user:', req.userId, 'alias:', req.userAlias);
         
-        // Process all user sites
-        userSites.forEach(dns => {
-          const site = dns_map[dns];
-          if (!site) return;
+      //   // Process all user sites
+      //   userSites.forEach(dns => {
+      //     const site = dns_map[dns];
+      //     if (!site) return;
           
-          if (site.type === 'user-folder-website' && site.user_folder === req.userAlias) {
-            // User folder website - get current folder CID
-            const currentFolderCID = user_folders[req.userAlias]?.cid;
-            allSites.push({
-              dns,
-              cid: currentFolderCID, // Current folder CID
-              type: site.type,
-              created: site.created,
-              updated: site.updated,
-              owner: site.owner,
-              versions: cid_history[dns]?.length || 1,
-              in_user_folder: true,
-              folder_path: site.folder_path,
-              website_url: `https://uservault.trustgrid.com/ipfs/${currentFolderCID}/${site.folder_path}`,
-              platform_url: `https://synqstorage.trustgrid.com/site/${dns}`
-            });
-          } else {
-            // Traditional direct website
-            allSites.push({
-              dns,
-              cid: site.cid,
-              type: site.type,
-              created: site.created,
-              updated: site.updated,
-              owner: site.owner,
-              versions: cid_history[dns]?.length || 1,
-              in_user_folder: false,
-              website_url: `https://uservault.trustgrid.com/ipfs/${site.cid}`,
-              platform_url: `https://synqstorage.trustgrid.com/site/${dns}`
-            });
-          }
-        });
+      //     if (site.type === 'user-folder-website' && site.user_folder === req.userAlias) {
+      //       // User folder website - get current folder CID
+      //       const currentFolderCID = user_folders[req.userAlias]?.cid;
+      //       allSites.push({
+      //         dns,
+      //         cid: currentFolderCID, // Current folder CID
+      //         type: site.type,
+      //         created: site.created,
+      //         updated: site.updated,
+      //         owner: site.owner,
+      //         versions: cid_history[dns]?.length || 1,
+      //         in_user_folder: true,
+      //         folder_path: site.folder_path,
+      //         website_url: `https://uservault.trustgrid.com/ipfs/${currentFolderCID}/${site.folder_path}`,
+      //         platform_url: `https://synqstorage.trustgrid.com/site/${dns}`
+      //       });
+      //     } else {
+      //       // Traditional direct website
+      //       allSites.push({
+      //         dns,
+      //         cid: site.cid,
+      //         type: site.type,
+      //         created: site.created,
+      //         updated: site.updated,
+      //         owner: site.owner,
+      //         versions: cid_history[dns]?.length || 1,
+      //         in_user_folder: false,
+      //         website_url: `https://uservault.trustgrid.com/ipfs/${site.cid}`,
+      //         platform_url: `https://synqstorage.trustgrid.com/site/${dns}`
+      //       });
+      //     }
+      //   });
   
-        console.log('Total sites found:', allSites.length);
+      //   console.log('Total sites found:', allSites.length);
         
-        return res.json({ 
-          sites: allSites, 
-          total: allSites.length,
-          user_alias: req.userAlias,
-          folder_cid: user_folders[req.userAlias]?.cid
-        });
+      //   return res.json({ 
+      //     sites: allSites, 
+      //     total: allSites.length,
+      //     user_alias: req.userAlias,
+      //     folder_cid: user_folders[req.userAlias]?.cid
+      //   });
+      // }
+
+      case 'list-user-sites': {
+        try {
+          const userId = req.userId;
+          const userAlias = req.userAlias;
+          
+          console.log('Loading sites for user:', userId, 'alias:', userAlias);
+          
+          // Get user's sites from user directories
+          const userSites = user_directories[userId]?.dns || [];
+          console.log('User sites from directories:', userSites);
+          
+          const allSites = [];
+          
+          // Get current folder info
+          const currentFolderCID = user_folders[userAlias]?.cid;
+          const folderContents = folder_contents[userAlias] || { websites: {}, zipwebsites: {} };
+          
+          console.log('Current folder CID:', currentFolderCID);
+          console.log('Folder contents:', {
+            websites: Object.keys(folderContents.websites || {}),
+            zipwebsites: Object.keys(folderContents.zipwebsites || {})
+          });
+          
+          // Process all user sites and categorize them
+          userSites.forEach(dns => {
+            const site = dns_map[dns];
+            if (!site) {
+              console.log(`⚠️ Site ${dns} found in user directory but not in DNS mapping`);
+              return;
+            }
+            
+            console.log(`Processing site: ${dns}, type: ${site.type}`);
+            
+            // Determine site type and build site info
+            let siteInfo = {
+              dns,
+              owner: site.owner,
+              created: site.created,
+              updated: site.updated,
+              versions: cid_history[dns]?.length || 1
+            };
+            
+            if (site.type === 'user-folder-website') {
+              // Template website in user folder
+              siteInfo = {
+                ...siteInfo,
+                type: 'template-website',
+                cid: currentFolderCID,
+                in_user_folder: true,
+                folder_path: site.folder_path || `websites/${dns}`,
+                website_url: `https://uservault.trustgrid.com/ipfs/${currentFolderCID}/websites/${dns}`,
+                platform_url: `https://synqstorage.trustgrid.com/site/${dns}`,
+                storage_location: 'User Folder (Template)',
+                folder_info: folderContents.websites[dns] || null
+              };
+              
+            } else if (site.type === 'user-folder-zipwebsite') {
+              // ZIP website in user folder
+              siteInfo = {
+                ...siteInfo,
+                type: 'zip-website',
+                cid: currentFolderCID,
+                in_user_folder: true,
+                folder_path: site.folder_path || `zipwebsites/${dns}`,
+                website_url: `https://uservault.trustgrid.com/ipfs/${currentFolderCID}/zipwebsites/${dns}`,
+                platform_url: `https://synqstorage.trustgrid.com/site/${dns}`,
+                storage_location: 'User Folder (ZIP)',
+                original_filename: site.original_filename,
+                file_count: site.file_count,
+                folder_info: folderContents.zipwebsites[dns] || null
+              };
+              
+            } else if (site.type === 'webapp-zip') {
+              // Legacy direct ZIP website
+              siteInfo = {
+                ...siteInfo,
+                type: 'legacy-zip',
+                cid: site.cid,
+                in_user_folder: false,
+                website_url: `https://uservault.trustgrid.com/ipfs/${site.cid}`,
+                platform_url: `https://synqstorage.trustgrid.com/site/${dns}`,
+                storage_location: 'Direct IPFS',
+                original_filename: site.original_filename,
+                file_count: site.fileCount
+              };
+              
+            } else {
+              // Traditional direct website
+              siteInfo = {
+                ...siteInfo,
+                type: 'direct-website',
+                cid: site.cid,
+                in_user_folder: false,
+                website_url: `https://uservault.trustgrid.com/ipfs/${site.cid}`,
+                platform_url: `https://synqstorage.trustgrid.com/site/${dns}`,
+                storage_location: 'Direct IPFS'
+              };
+            }
+            
+            allSites.push(siteInfo);
+          });
+          
+          // Sort sites by creation date (newest first)
+          allSites.sort((a, b) => new Date(b.created) - new Date(a.created));
+          
+          // Generate summary statistics
+          const summary = {
+            total_sites: allSites.length,
+            template_websites: allSites.filter(s => s.type === 'template-website').length,
+            zip_websites: allSites.filter(s => s.type === 'zip-website').length,
+            legacy_sites: allSites.filter(s => s.type === 'legacy-zip' || s.type === 'direct-website').length,
+            in_user_folder: allSites.filter(s => s.in_user_folder).length,
+            direct_ipfs: allSites.filter(s => !s.in_user_folder).length
+          };
+          
+          console.log('Site summary:', summary);
+          
+          return res.json({ 
+            sites: allSites, 
+            total: allSites.length,
+            summary,
+            user_info: {
+              user_id: userId,
+              alias: userAlias,
+              folder_cid: currentFolderCID
+            },
+            folder_structure: {
+              websites: Object.keys(folderContents.websites || {}),
+              zipwebsites: Object.keys(folderContents.zipwebsites || {}),
+              files: Object.keys(folderContents.files || {})
+            }
+          });
+          
+        } catch (err) {
+          console.error('Error listing user sites:', err);
+          return res.status(500).json({ error: 'Failed to list sites: ' + err.message });
+        }
       }
 
       case 'get-site-history': {
@@ -1537,34 +1676,123 @@ app.post('/command', requireAuth, async (req, res) => {
         });
       }
 
+      // case 'get-user-folder-info': {
+      //   if (!req.userAlias || !user_folders[req.userAlias]) {
+      //     return res.status(404).json({ error: 'User folder not found' });
+      //   }
+        
+      //   const folder = user_folders[req.userAlias];
+      //   const contents = folder_contents[req.userAlias] || { files: {}, websites: {} };
+        
+      //   return res.json({
+      //     alias: req.userAlias,
+      //     folder: {
+      //       cid: folder.cid,
+      //       quota_used: folder.quota_used,
+      //       quota_limit: folder.quota_limit,
+      //       quota_available: folder.quota_limit - folder.quota_used,
+      //       quota_percentage: ((folder.quota_used / folder.quota_limit) * 100).toFixed(2),
+      //       created: folder.created,
+      //       updated: folder.updated
+      //     },
+      //     contents: {
+      //       files: contents.files,
+      //       websites: contents.websites,
+      //       files_count: Object.keys(contents.files).length,
+      //       websites_count: Object.keys(contents.websites).length
+      //     },
+      //     gateway_url: `http://localhost:8080/ipfs/${folder.cid}`,
+      //     platform_url: `http://localhost:3000/user-folder/${req.userAlias}`
+      //   });
+      // }
+
       case 'get-user-folder-info': {
         if (!req.userAlias || !user_folders[req.userAlias]) {
           return res.status(404).json({ error: 'User folder not found' });
         }
         
-        const folder = user_folders[req.userAlias];
-        const contents = folder_contents[req.userAlias] || { files: {}, websites: {} };
-        
-        return res.json({
-          alias: req.userAlias,
-          folder: {
-            cid: folder.cid,
-            quota_used: folder.quota_used,
-            quota_limit: folder.quota_limit,
-            quota_available: folder.quota_limit - folder.quota_used,
-            quota_percentage: ((folder.quota_used / folder.quota_limit) * 100).toFixed(2),
-            created: folder.created,
-            updated: folder.updated
-          },
-          contents: {
-            files: contents.files,
-            websites: contents.websites,
-            files_count: Object.keys(contents.files).length,
-            websites_count: Object.keys(contents.websites).length
-          },
-          gateway_url: `http://localhost:8080/ipfs/${folder.cid}`,
-          platform_url: `http://localhost:3000/user-folder/${req.userAlias}`
-        });
+        try {
+          const alias = req.userAlias;
+          const folder = user_folders[alias];
+          const contents = folder_contents[alias] || { files: {}, websites: {}, zipwebsites: {} };
+          
+          // Calculate actual storage usage
+          let actualQuotaUsed = 0;
+          
+          // Count files
+          Object.values(contents.files || {}).forEach(file => {
+            actualQuotaUsed += file.size || 0;
+          });
+          
+          // Count template websites (estimate)
+          Object.values(contents.websites || {}).forEach(website => {
+            actualQuotaUsed += website.estimated_size || 0;
+          });
+          
+          // Count ZIP websites (estimate)
+          Object.values(contents.zipwebsites || {}).forEach(zipwebsite => {
+            actualQuotaUsed += zipwebsite.estimated_size || 0;
+          });
+          
+          // Update the actual quota if it's different
+          if (Math.abs(folder.quota_used - actualQuotaUsed) > 1024) { // More than 1KB difference
+            folder.quota_used = actualQuotaUsed;
+            user_folders[alias].quota_used = actualQuotaUsed;
+            console.log(`🔧 Updated quota for ${alias}: ${actualQuotaUsed} bytes`);
+          }
+          
+          // Get counts
+          const filesCount = Object.keys(contents.files || {}).length;
+          const websitesCount = Object.keys(contents.websites || {}).length;
+          const zipWebsitesCount = Object.keys(contents.zipwebsites || {}).length;
+          const totalWebsites = websitesCount + zipWebsitesCount;
+          
+          // Update folder counts
+          user_folders[alias].files_count = filesCount;
+          user_folders[alias].websites_count = websitesCount;
+          user_folders[alias].zipwebsites_count = zipWebsitesCount;
+          
+          return res.json({
+            alias,
+            folder: {
+              cid: folder.cid,
+              quota_used: folder.quota_used,
+              quota_limit: folder.quota_limit,
+              quota_available: folder.quota_limit - folder.quota_used,
+              quota_percentage: ((folder.quota_used / folder.quota_limit) * 100).toFixed(2),
+              created: folder.created,
+              updated: folder.updated
+            },
+            contents: {
+              files: contents.files || {},
+              websites: contents.websites || {},
+              zipwebsites: contents.zipwebsites || {},
+              files_count: filesCount,
+              websites_count: websitesCount,
+              zipwebsites_count: zipWebsitesCount,
+              total_websites: totalWebsites
+            },
+            summary: {
+              total_items: filesCount + totalWebsites,
+              template_websites: websitesCount,
+              zip_websites: zipWebsitesCount,
+              regular_files: filesCount,
+              storage_used_mb: (folder.quota_used / 1024 / 1024).toFixed(2),
+              storage_available_mb: ((folder.quota_limit - folder.quota_used) / 1024 / 1024).toFixed(2)
+            },
+            urls: {
+              gateway_url: `https://uservault.trustgrid.com/ipfs/${folder.cid}`,
+              platform_url: `https://synqstorage.trustgrid.com/user-folder/${alias}`,
+              websites_folder: `https://uservault.trustgrid.com/ipfs/${folder.cid}/websites`,
+              zipwebsites_folder: `https://uservault.trustgrid.com/ipfs/${folder.cid}/zipwebsites`,
+              files_folder: `https://uservault.trustgrid.com/ipfs/${folder.cid}/files`
+            }
+          });
+          
+        } catch (err) {
+          console.error('Error getting user folder info:', err);
+          return res.status(500).json({ error: 'Failed to get folder info: ' + err.message });
+        }
       }
 
       case 'upload-to-user-folder': {
@@ -2059,6 +2287,78 @@ app.post('/command', requireAuth, async (req, res) => {
         }
       }
 
+      // case 'rebuild-user-folder': {
+      //   const { username } = args;
+        
+      //   if (username !== req.userAlias) {
+      //     return res.status(403).json({ error: 'Access denied' });
+      //   }
+        
+      //   try {
+      //     console.log(`🔨 Rebuilding folder for ${username}`);
+          
+      //     const currentCID = user_folders[username].cid;
+      //     const tempDir = path.join(__dirname, 'temp', `rebuild-${username}-${Date.now()}`);
+          
+      //     // Download and check actual structure
+      //     fs.mkdirSync(tempDir, { recursive: true });
+      //     await execPromise(`ipfs get ${currentCID} -o ${tempDir}`);
+          
+      //     // Find the actual content directory (same logic as updateUserFolder)
+      //     let folderDir;
+      //     const tempContents = fs.readdirSync(tempDir);
+          
+      //     if (tempContents.includes(currentCID)) {
+      //       folderDir = path.join(tempDir, currentCID);
+      //     } else if (tempContents.length === 1 && fs.statSync(path.join(tempDir, tempContents[0])).isDirectory()) {
+      //       folderDir = path.join(tempDir, tempContents[0]);
+      //     } else {
+      //       folderDir = tempDir;
+      //     }
+          
+      //     // Check what actually exists
+      //     const folderContents = fs.readdirSync(folderDir);
+      //     console.log(`📋 Actual folder contents:`, folderContents);
+          
+      //     let actualWebsites = [];
+      //     const websitesDir = path.join(folderDir, 'websites');
+      //     if (fs.existsSync(websitesDir)) {
+      //       actualWebsites = fs.readdirSync(websitesDir).filter(item => 
+      //         fs.statSync(path.join(websitesDir, item)).isDirectory()
+      //       );
+      //     }
+          
+      //     // Get tracked websites
+      //     const trackedWebsites = Object.keys(folder_contents[username]?.websites || {});
+          
+      //     // Compare
+      //     const missing = trackedWebsites.filter(dns => !actualWebsites.includes(dns));
+      //     const untracked = actualWebsites.filter(dns => !trackedWebsites.includes(dns));
+          
+      //     // Cleanup
+      //     fs.rmSync(tempDir, { recursive: true, force: true });
+          
+      //     return res.json({
+      //       username,
+      //       current_cid: currentCID,
+      //       folder_contents: folderContents,
+      //       tracked_websites: trackedWebsites,
+      //       actual_websites: actualWebsites,
+      //       missing_from_ipfs: missing,
+      //       untracked_in_system: untracked,
+      //       status: missing.length === 0 ? 'All websites exist in IPFS' : 'Some websites missing',
+      //       test_urls: actualWebsites.map(dns => ({
+      //         dns,
+      //         url: `https://uservault.trustgrid.com/ipfs/${currentCID}/websites/${dns}`,
+      //         platform_url: `https://synqstorage.trustgrid.com/site/${dns}`
+      //       }))
+      //     });
+          
+      //   } catch (err) {
+      //     return res.status(500).json({ error: 'Rebuild check failed: ' + err.message });
+      //   }
+      // }
+
       case 'rebuild-user-folder': {
         const { username } = args;
         
@@ -2067,7 +2367,7 @@ app.post('/command', requireAuth, async (req, res) => {
         }
         
         try {
-          console.log(`🔨 Rebuilding folder for ${username}`);
+          console.log(`🔨 Rebuilding folder check for ${username}`);
           
           const currentCID = user_folders[username].cid;
           const tempDir = path.join(__dirname, 'temp', `rebuild-${username}-${Date.now()}`);
@@ -2076,7 +2376,7 @@ app.post('/command', requireAuth, async (req, res) => {
           fs.mkdirSync(tempDir, { recursive: true });
           await execPromise(`ipfs get ${currentCID} -o ${tempDir}`);
           
-          // Find the actual content directory (same logic as updateUserFolder)
+          // Find the actual content directory
           let folderDir;
           const tempContents = fs.readdirSync(tempDir);
           
@@ -2092,20 +2392,35 @@ app.post('/command', requireAuth, async (req, res) => {
           const folderContents = fs.readdirSync(folderDir);
           console.log(`📋 Actual folder contents:`, folderContents);
           
-          let actualWebsites = [];
+          // Check websites directories
+          let actualTemplateWebsites = [];
+          let actualZipWebsites = [];
+          
           const websitesDir = path.join(folderDir, 'websites');
           if (fs.existsSync(websitesDir)) {
-            actualWebsites = fs.readdirSync(websitesDir).filter(item => 
+            actualTemplateWebsites = fs.readdirSync(websitesDir).filter(item => 
               fs.statSync(path.join(websitesDir, item)).isDirectory()
             );
           }
           
-          // Get tracked websites
-          const trackedWebsites = Object.keys(folder_contents[username]?.websites || {});
+          const zipWebsitesDir = path.join(folderDir, 'zipwebsites');
+          if (fs.existsSync(zipWebsitesDir)) {
+            actualZipWebsites = fs.readdirSync(zipWebsitesDir).filter(item => 
+              fs.statSync(path.join(zipWebsitesDir, item)).isDirectory()
+            );
+          }
           
-          // Compare
-          const missing = trackedWebsites.filter(dns => !actualWebsites.includes(dns));
-          const untracked = actualWebsites.filter(dns => !trackedWebsites.includes(dns));
+          // Get tracked websites
+          const trackedContents = folder_contents[username] || { websites: {}, zipwebsites: {} };
+          const trackedTemplateWebsites = Object.keys(trackedContents.websites || {});
+          const trackedZipWebsites = Object.keys(trackedContents.zipwebsites || {});
+          
+          // Compare tracking vs reality
+          const templateMissing = trackedTemplateWebsites.filter(dns => !actualTemplateWebsites.includes(dns));
+          const templateUntracked = actualTemplateWebsites.filter(dns => !trackedTemplateWebsites.includes(dns));
+          
+          const zipMissing = trackedZipWebsites.filter(dns => !actualZipWebsites.includes(dns));
+          const zipUntracked = actualZipWebsites.filter(dns => !trackedZipWebsites.includes(dns));
           
           // Cleanup
           fs.rmSync(tempDir, { recursive: true, force: true });
@@ -2114,16 +2429,32 @@ app.post('/command', requireAuth, async (req, res) => {
             username,
             current_cid: currentCID,
             folder_contents: folderContents,
-            tracked_websites: trackedWebsites,
-            actual_websites: actualWebsites,
-            missing_from_ipfs: missing,
-            untracked_in_system: untracked,
-            status: missing.length === 0 ? 'All websites exist in IPFS' : 'Some websites missing',
-            test_urls: actualWebsites.map(dns => ({
-              dns,
-              url: `https://uservault.trustgrid.com/ipfs/${currentCID}/websites/${dns}`,
-              platform_url: `https://synqstorage.trustgrid.com/site/${dns}`
-            }))
+            template_websites: {
+              tracked: trackedTemplateWebsites,
+              actual: actualTemplateWebsites,
+              missing_from_ipfs: templateMissing,
+              untracked_in_system: templateUntracked
+            },
+            zip_websites: {
+              tracked: trackedZipWebsites,
+              actual: actualZipWebsites,
+              missing_from_ipfs: zipMissing,
+              untracked_in_system: zipUntracked
+            },
+            status: (templateMissing.length === 0 && zipMissing.length === 0) ? 
+              'All websites exist in IPFS' : 'Some websites missing',
+            test_urls: {
+              template_sites: actualTemplateWebsites.map(dns => ({
+                dns,
+                url: `https://uservault.trustgrid.com/ipfs/${currentCID}/websites/${dns}`,
+                platform_url: `https://synqstorage.trustgrid.com/site/${dns}`
+              })),
+              zip_sites: actualZipWebsites.map(dns => ({
+                dns,
+                url: `https://uservault.trustgrid.com/ipfs/${currentCID}/zipwebsites/${dns}`,
+                platform_url: `https://synqstorage.trustgrid.com/site/${dns}`
+              }))
+            }
           });
           
         } catch (err) {
