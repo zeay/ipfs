@@ -89,6 +89,7 @@ async function createUserFolder(alias) {
   
   // Create subdirectories
   fs.mkdirSync(path.join(folderDir, 'websites'), { recursive: true });
+  fs.mkdirSync(path.join(folderDir, 'zipwebsites'), { recursive: true }); // ADD THIS
   fs.mkdirSync(path.join(folderDir, 'files'), { recursive: true });
   fs.mkdirSync(path.join(folderDir, 'media'), { recursive: true });
   
@@ -99,7 +100,8 @@ Quota: 10MB
 Alias: ${alias}
 
 This is your personal IPFS storage space. You can:
-- Host websites in the 'websites' folder
+- Host template websites in the 'websites' folder
+- Host ZIP websites in the 'zipwebsites' folder
 - Store files in the 'files' folder  
 - Upload media in the 'media' folder
 
@@ -109,7 +111,8 @@ Happy building! 🚀`);
   fs.writeFileSync(readmeFile, `# ${alias}'s IPFS Folder
 
 ## Structure
-- \`websites/\` - Your deployed websites
+- \`websites/\` - Template-created websites
+- \`zipwebsites/\` - ZIP-uploaded websites
 - \`files/\` - Document storage
 - \`media/\` - Images, videos, assets
 - \`welcome.txt\` - Welcome message
@@ -151,9 +154,14 @@ Generated: ${new Date().toISOString()}
         
         <div class="folder-grid">
             <div class="folder-item">
-                <div class="folder-icon">🌐</div>
-                <h3>Websites</h3>
-                <p>Your deployed web applications</p>
+                <div class="folder-icon">🎨</div>
+                <h3>Template Sites</h3>
+                <p>Your template-created websites</p>
+            </div>
+            <div class="folder-item">
+                <div class="folder-icon">📦</div>
+                <h3>ZIP Sites</h3>
+                <p>Your ZIP-uploaded websites</p>
             </div>
             <div class="folder-item">
                 <div class="folder-icon">📄</div>
@@ -161,7 +169,7 @@ Generated: ${new Date().toISOString()}
                 <p>Documents and data storage</p>
             </div>
             <div class="folder-item">
-                <div class="folder-icon">🎨</div>
+                <div class="folder-icon">🎭</div>
                 <h3>Media</h3>
                 <p>Images, videos, and assets</p>
             </div>
@@ -193,16 +201,19 @@ Generated: ${new Date().toISOString()}
     created: new Date().toISOString(),
     updated: new Date().toISOString(),
     files_count: 3,
-    websites_count: 0
+    websites_count: 0,
+    zipwebsites_count: 0  // ADD THIS
   };
   
+  // CRITICAL FIX: Initialize folder_contents properly
   folder_contents[alias] = {
     files: { 
       'welcome.txt': { size: fs.readFileSync(welcomeFile).length, type: 'text' },
       'README.md': { size: fs.readFileSync(readmeFile).length, type: 'markdown' },
       'index.html': { size: fs.readFileSync(indexFile).length, type: 'html' }
     },
-    websites: {}
+    websites: {},      // Template websites
+    zipwebsites: {}    // ZIP websites - ADD THIS
   };
   
   // Cleanup
@@ -489,6 +500,33 @@ async function updateUserFolder(username, newContent, contentType, contentSize) 
     throw new Error(`Quota exceeded. Available: ${available.toFixed(2)}MB`);
   }
   
+  // CRITICAL FIX: Initialize folder_contents if it doesn't exist
+  if (!folder_contents[username]) {
+    console.log(`🔧 Initializing folder_contents for ${username}`);
+    folder_contents[username] = {
+      files: {},
+      websites: {},
+      zipwebsites: {}
+    };
+  }
+  
+  // ADDITIONAL FIX: Ensure all required properties exist
+  if (!folder_contents[username].files) {
+    folder_contents[username].files = {};
+  }
+  if (!folder_contents[username].websites) {
+    folder_contents[username].websites = {};
+  }
+  if (!folder_contents[username].zipwebsites) {
+    folder_contents[username].zipwebsites = {};
+  }
+  
+  console.log(`📊 Current folder_contents for ${username}:`, {
+    files: Object.keys(folder_contents[username].files).length,
+    websites: Object.keys(folder_contents[username].websites).length,
+    zipwebsites: Object.keys(folder_contents[username].zipwebsites).length
+  });
+  
   // Get current folder content
   const currentCID = user_folders[username].cid;
   const tempDir = path.join(__dirname, 'temp', `update-user-${username}-${Date.now()}`);
@@ -583,8 +621,7 @@ async function updateUserFolder(username, newContent, contentType, contentSize) 
         fs.writeFileSync(dataJsonPath, JSON.stringify(websiteData, null, 2));
       }
       
-      // Update tracking
-      if (!folder_contents[username]) folder_contents[username] = { files: {}, websites: {}, zipwebsites: {} };
+      // Update tracking - FIXED: folder_contents is now guaranteed to exist
       folder_contents[username].websites[newContent.dns] = {
         estimated_size: contentSize,
         files: Object.keys(newContent.files),
@@ -592,15 +629,21 @@ async function updateUserFolder(username, newContent, contentType, contentSize) 
         has_data_json: true
       };
       
+      console.log(`✅ Added website to tracking: ${newContent.dns}`);
+      
     } else if (contentType === 'zipwebsite') {
       // ZIP website goes to zipwebsites/
       const zipWebsiteDir = path.join(folderDir, 'zipwebsites', newContent.dns);
-      console.log(`📦 Creating ZIP website: ${newContent.dns}`);
+      console.log(`📦 Creating ZIP website: ${newContent.dns} at ${zipWebsiteDir}`);
       
       fs.mkdirSync(zipWebsiteDir, { recursive: true });
       
       // Copy all extracted files
       function copyDirectory(src, dest) {
+        if (!fs.existsSync(src)) {
+          throw new Error(`Source directory does not exist: ${src}`);
+        }
+        
         const items = fs.readdirSync(src);
         for (const item of items) {
           const srcPath = path.join(src, item);
@@ -615,11 +658,14 @@ async function updateUserFolder(username, newContent, contentType, contentSize) 
         }
       }
       
+      if (!fs.existsSync(newContent.extractedPath)) {
+        throw new Error(`Extracted path does not exist: ${newContent.extractedPath}`);
+      }
+      
       copyDirectory(newContent.extractedPath, zipWebsiteDir);
       console.log(`✅ Copied ZIP content to zipwebsites/${newContent.dns}`);
       
-      // Update tracking
-      if (!folder_contents[username]) folder_contents[username] = { files: {}, websites: {}, zipwebsites: {} };
+      // Update tracking - FIXED: folder_contents is now guaranteed to exist
       folder_contents[username].zipwebsites[newContent.dns] = {
         estimated_size: contentSize,
         files: newContent.filesList || [],
@@ -627,6 +673,8 @@ async function updateUserFolder(username, newContent, contentType, contentSize) 
         original_filename: newContent.originalFilename,
         file_count: newContent.fileCount
       };
+      
+      console.log(`✅ Added ZIP website to tracking: ${newContent.dns}`);
       
     } else if (contentType === 'file') {
       // Regular file goes to files/
@@ -640,14 +688,22 @@ async function updateUserFolder(username, newContent, contentType, contentSize) 
         fs.writeFileSync(filePath, newContent.content);
       }
       
-      // Update tracking
-      if (!folder_contents[username]) folder_contents[username] = { files: {}, websites: {}, zipwebsites: {} };
+      // Update tracking - FIXED: folder_contents is now guaranteed to exist
       folder_contents[username].files[newContent.filename] = {
         size: contentSize,
         type: newContent.type || 'unknown',
         created: new Date().toISOString()
       };
+      
+      console.log(`✅ Added file to tracking: ${newContent.filename}`);
     }
+    
+    // Log final tracking state
+    console.log(`📊 Final folder_contents for ${username}:`, {
+      files: Object.keys(folder_contents[username].files).length,
+      websites: Object.keys(folder_contents[username].websites).length,
+      zipwebsites: Object.keys(folder_contents[username].zipwebsites).length
+    });
     
     // Verify final structure
     const finalWebsites = fs.existsSync(websitesDir) ? fs.readdirSync(websitesDir) : [];
