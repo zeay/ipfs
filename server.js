@@ -1393,6 +1393,348 @@ app.post('/command', requireAuth, async (req, res) => {
           return res.status(500).json({ error: 'Failed to update website: ' + err.message });
         }
       }
+      
+      case 'edit-website-data': {
+        const { dns, dataContent } = args;
+        
+        if (!dns || !dataContent) {
+          return res.status(400).json({ error: 'DNS and data content are required' });
+        }
+        
+        // Check if website exists and user owns it
+        const site = dns_map[dns];
+        if (!site) {
+          return res.status(404).json({ error: 'Website not found' });
+        }
+        
+        if (site.type === 'user-folder-website' && site.user_folder !== req.userAlias) {
+          return res.status(403).json({ error: 'Access denied' });
+        }
+        
+        if (site.owner !== req.userId) {
+          return res.status(403).json({ error: 'Access denied' });
+        }
+        
+        try {
+          console.log(`✏️ Editing data for website: ${dns}`);
+          
+          // Validate JSON content
+          try {
+            JSON.parse(dataContent);
+          } catch (err) {
+            return res.status(400).json({ error: 'Invalid JSON format' });
+          }
+          
+          if (site.type === 'user-folder-website') {
+            // Handle user folder website
+            const username = site.user_folder;
+            const currentCID = user_folders[username].cid;
+            const tempDir = path.join(__dirname, 'temp', `edit-${username}-${Date.now()}`);
+            
+            try {
+              // Download current folder
+              fs.mkdirSync(tempDir, { recursive: true });
+              await execPromise(`ipfs get ${currentCID} -o ${tempDir}`);
+              
+              // Find the actual content directory
+              let folderDir;
+              const tempContents = fs.readdirSync(tempDir);
+              
+              if (tempContents.includes(currentCID)) {
+                folderDir = path.join(tempDir, currentCID);
+              } else if (tempContents.length === 1 && fs.statSync(path.join(tempDir, tempContents[0])).isDirectory()) {
+                folderDir = path.join(tempDir, tempContents[0]);
+              } else {
+                folderDir = tempDir;
+              }
+              
+              // Find the specific website directory
+              const websiteDir = path.join(folderDir, 'websites', dns);
+              if (!fs.existsSync(websiteDir)) {
+                throw new Error(`Website directory not found: websites/${dns}`);
+              }
+              
+              // Check what files exist in the website
+              const existingFiles = [];
+              function scanWebsiteFiles(dir, relativePath = '') {
+                const items = fs.readdirSync(dir);
+                for (const item of items) {
+                  const itemPath = path.join(dir, item);
+                  const relPath = path.join(relativePath, item).replace(/\\/g, '/');
+                  
+                  if (fs.statSync(itemPath).isDirectory()) {
+                    scanWebsiteFiles(itemPath, relPath);
+                  } else {
+                    existingFiles.push(relPath);
+                  }
+                }
+              }
+              
+              scanWebsiteFiles(websiteDir);
+              console.log(`📄 Existing files in website:`, existingFiles);
+              
+              // Update ONLY the data.json file
+              const dataJsonPath = path.join(websiteDir, 'data', 'data.json');
+              if (!fs.existsSync(path.dirname(dataJsonPath))) {
+                fs.mkdirSync(path.dirname(dataJsonPath), { recursive: true });
+              }
+              
+              // Write updated data.json
+              fs.writeFileSync(dataJsonPath, dataContent);
+              console.log(`✅ Updated data.json for ${dns}`);
+              
+              // Verify all files still exist after edit
+              const filesAfterEdit = [];
+              scanWebsiteFiles(websiteDir);
+              console.log(`📄 Files after edit:`, filesAfterEdit);
+              
+              // Re-upload entire folder
+              console.log(`📤 Re-uploading folder after data edit...`);
+              const result = await execPromise(`ipfs add -r .`, folderDir);
+              const lines = result.trim().split('\n');
+              const newCID = lines[lines.length - 1].split(' ')[1];
+              
+              // Update user folder CID
+              const oldCID = user_folders[username].cid;
+              user_folders[username].cid = newCID;
+              user_folders[username].updated = new Date().toISOString();
+              
+              // Update website CID mapping
+              if (website_cid_mapping && website_cid_mapping[dns]) {
+                website_cid_mapping[dns].current_folder_cid = newCID;
+                website_cid_mapping[dns].last_updated = new Date().toISOString();
+              }
+              
+              // Add to history
+              if (!user_folder_cid_history) user_folder_cid_history = {};
+              if (!user_folder_cid_history[username]) user_folder_cid_history[username] = [];
+              
+              user_folder_cid_history[username].push({
+                cid: newCID,
+                previous_cid: oldCID,
+                timestamp: new Date().toISOString(),
+                action: `Edited data for website: ${dns}`,
+                websites: Object.keys(folder_contents[username]?.websites || {}),
+                version: user_folder_cid_history[username].length + 1
+              });
+              
+              // Update CID redirects
+              if (!cid_redirects) cid_redirects = {};
+              cid_redirects[oldCID] = newCID;
+              
+              // Cleanup
+              fs.rmSync(tempDir, { recursive: true, force: true });
+              saveData();
+              
+              return res.json({
+                success: true,
+                dns,
+                old_folder_cid: oldCID,
+                new_folder_cid: newCID,
+                website_url: `https://uservault.trustgrid.com:8080/ipfs/${newCID}/websites/${dns}`,
+                existing_files_preserved: existingFiles,
+                message: 'Website data updated successfully - all files preserved'
+              });
+              
+            } catch (err) {
+              if (fs.existsSync(tempDir)) {
+                fs.rmSync(tempDir, { recursive: true, force: true });
+              }
+              throw err;
+            }
+            
+          } else {
+            // Handle direct IPFS website (traditional)
+            const currentCID = site.cid;
+            const tempDir = path.join(__dirname, 'temp', `edit-direct-${Date.now()}`);
+            
+            try {
+              // Download current website
+              fs.mkdirSync(tempDir, { recursive: true });
+              await execPromise(`ipfs get ${currentCID} -o ${tempDir}`);
+              
+              // Find the actual content directory
+              let websiteDir;
+              const tempContents = fs.readdirSync(tempDir);
+              
+              if (tempContents.includes(currentCID)) {
+                websiteDir = path.join(tempDir, currentCID);
+              } else if (tempContents.length === 1 && fs.statSync(path.join(tempDir, tempContents[0])).isDirectory()) {
+                websiteDir = path.join(tempDir, tempContents[0]);
+              } else {
+                websiteDir = tempDir;
+              }
+              
+              // Check existing files
+              const existingFiles = [];
+              function scanFiles(dir, relativePath = '') {
+                const items = fs.readdirSync(dir);
+                for (const item of items) {
+                  const itemPath = path.join(dir, item);
+                  const relPath = path.join(relativePath, item).replace(/\\/g, '/');
+                  
+                  if (fs.statSync(itemPath).isDirectory()) {
+                    scanFiles(itemPath, relPath);
+                  } else {
+                    existingFiles.push(relPath);
+                  }
+                }
+              }
+              
+              scanFiles(websiteDir);
+              console.log(`📄 Existing files in direct website:`, existingFiles);
+              
+              // Update data.json
+              const dataJsonPath = path.join(websiteDir, 'data', 'data.json');
+              if (!fs.existsSync(path.dirname(dataJsonPath))) {
+                fs.mkdirSync(path.dirname(dataJsonPath), { recursive: true });
+              }
+              
+              fs.writeFileSync(dataJsonPath, dataContent);
+              console.log(`✅ Updated data.json for direct website ${dns}`);
+              
+              // Re-upload website
+              const result = await execPromise(`ipfs add -r .`, websiteDir);
+              const lines = result.trim().split('\n');
+              const newCID = lines[lines.length - 1].split(' ')[1];
+              
+              // Update DNS mapping
+              const oldCID = site.cid;
+              dns_map[dns].cid = newCID;
+              dns_map[dns].updated = new Date().toISOString();
+              
+              // Add to history
+              if (!cid_history[dns]) cid_history[dns] = [];
+              cid_history[dns].push({
+                cid: newCID,
+                timestamp: new Date().toISOString(),
+                version: cid_history[dns].length + 1,
+                action: 'Data edited'
+              });
+              
+              // Cleanup
+              fs.rmSync(tempDir, { recursive: true, force: true });
+              saveData();
+              
+              return res.json({
+                success: true,
+                dns,
+                old_cid: oldCID,
+                new_cid: newCID,
+                website_url: `https://uservault.trustgrid.com:8080/ipfs/${newCID}`,
+                existing_files_preserved: existingFiles,
+                message: 'Direct website data updated successfully'
+              });
+              
+            } catch (err) {
+              if (fs.existsSync(tempDir)) {
+                fs.rmSync(tempDir, { recursive: true, force: true });
+              }
+              throw err;
+            }
+          }
+          
+        } catch (err) {
+          console.error(`❌ Error editing website data:`, err);
+          return res.status(500).json({ error: 'Failed to edit website: ' + err.message });
+        }
+      }
+
+      case 'get-website-data': {
+        const { dns } = args;
+        
+        if (!dns) {
+          return res.status(400).json({ error: 'DNS required' });
+        }
+        
+        const site = dns_map[dns];
+        if (!site) {
+          return res.status(404).json({ error: 'Website not found' });
+        }
+        
+        try {
+          let dataContent = null;
+          let websiteInfo = {};
+          
+          if (site.type === 'user-folder-website' && site.user_folder) {
+            // Get data from user folder website
+            const currentFolderCID = user_folders[site.user_folder]?.cid;
+            if (!currentFolderCID) {
+              throw new Error('User folder not found');
+            }
+            
+            const dataPath = `websites/${dns}/data/data.json`;
+            
+            try {
+              const response = await fetch(`http://localhost:8080/ipfs/${currentFolderCID}/${dataPath}`);
+              if (response.ok) {
+                dataContent = await response.text();
+              }
+            } catch (err) {
+              console.log('Could not fetch data.json, creating default...');
+            }
+            
+            websiteInfo = {
+              type: 'user-folder-website',
+              folder_cid: currentFolderCID,
+              path: `websites/${dns}`,
+              website_url: `https://uservault.trustgrid.com:8080/ipfs/${currentFolderCID}/websites/${dns}`,
+              user_folder: site.user_folder
+            };
+            
+          } else {
+            // Get data from direct website
+            try {
+              const response = await fetch(`http://localhost:8080/ipfs/${site.cid}/data/data.json`);
+              if (response.ok) {
+                dataContent = await response.text();
+              }
+            } catch (err) {
+              console.log('Could not fetch data.json, creating default...');
+            }
+            
+            websiteInfo = {
+              type: 'direct-website',
+              cid: site.cid,
+              website_url: `https://uservault.trustgrid.com:8080/ipfs/${site.cid}`
+            };
+          }
+          
+          // If no data.json found, create default structure
+          if (!dataContent) {
+            const defaultData = {
+              template: 'unknown',
+              userData: {
+                siteName: dns.split('.')[0],
+                fullName: 'Website Owner',
+                title: 'Creator',
+                email: 'owner@example.com',
+                bio: 'This is my website on IPFS.'
+              },
+              owner: req.userAlias || 'unknown',
+              created: site.created || new Date().toISOString(),
+              updated: new Date().toISOString(),
+              version: '1.0',
+              dns: dns,
+              type: site.type || 'website',
+              note: 'This data structure was created for editing. You can modify any values.'
+            };
+            dataContent = JSON.stringify(defaultData, null, 2);
+          }
+          
+          return res.json({
+            dns,
+            dataContent,
+            websiteInfo,
+            canEdit: site.owner === req.userId || site.user_folder === req.userAlias,
+            message: 'Website data loaded successfully'
+          });
+          
+        } catch (err) {
+          console.error('Error getting website data:', err);
+          return res.status(500).json({ error: 'Failed to get website data: ' + err.message });
+        }
+      }
 
       case 'rebuild-user-folder': {
         const { username } = args;
